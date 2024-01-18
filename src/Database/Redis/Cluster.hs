@@ -32,7 +32,6 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.IntMap.Strict as IntMap
 import           Data.Typeable
 import qualified Scanner
-import System.IO.Unsafe(unsafeInterleaveIO)
 
 import Database.Redis.Protocol(Reply(Error), renderRequest, reply)
 import qualified Database.Redis.Cluster.Command as CMD
@@ -147,7 +146,7 @@ requestPipelined refreshAction conn@(Connection _ pipelineVar shardMapVar _) nex
                     else
                         Pending [nextRequest]
             return (e, (s', 0))
-    evaluateAction <- unsafeInterleaveIO $ do
+    evaluateAction <- do
         replies <- hasLocked $ modifyMVar newStateVar $ \case
             Executed replies ->
                 return (Executed replies, replies)

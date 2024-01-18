@@ -21,40 +21,28 @@ module Database.Redis.ProtocolPipelining (
 ) where
 
 import           Prelude
-import           Control.Monad
 import qualified Scanner
 import qualified Data.ByteString as S
 import           Data.IORef
 import qualified Network.Socket as NS
 import qualified Network.TLS as TLS
-import           System.IO.Unsafe
 
 import           Database.Redis.Protocol
 import qualified Database.Redis.ConnectionContext as CC
 
 data Connection = Conn
-  { connCtx        :: CC.ConnectionContext -- ^ Connection socket-handle.
-  , connReplies    :: IORef [Reply] -- ^ Reply thunks for unsent requests.
-  , connPending    :: IORef [Reply]
-    -- ^ Reply thunks for requests "in the pipeline". Refers to the same list as
-    --   'connReplies', but can have an offset.
-  , connPendingCnt :: IORef Int
-    -- ^ Number of pending replies and thus the difference length between
-    --   'connReplies' and 'connPending'.
-    --   length connPending  - pendingCount = length connReplies
+  { connCtx      :: CC.ConnectionContext -- ^ Connection socket-handle.
+  , connGetReply :: IO Reply -- ^ Reply thunks for unsent requests.
   }
 
 
 fromCtx :: CC.ConnectionContext -> IO Connection
-fromCtx ctx = Conn ctx <$> newIORef [] <*> newIORef [] <*> newIORef 0
+fromCtx ctx = Conn ctx <$> mkConnGetReply ctx
 
 connect :: NS.HostName -> CC.PortID -> Maybe Int -> IO Connection
 connect hostName portId timeoutOpt = do
-    connCtx <- CC.connect hostName portId timeoutOpt
-    connReplies <- newIORef []
-    connPending <- newIORef []
-    connPendingCnt <- newIORef 0
-    return Conn{..}
+  connCtx <- CC.connect hostName portId timeoutOpt
+  fromCtx connCtx
 
 enableTLS :: TLS.ClientParams -> Connection -> IO Connection
 enableTLS tlsParams conn@Conn{..} = do
@@ -62,10 +50,7 @@ enableTLS tlsParams conn@Conn{..} = do
     return conn{connCtx = newCtx}
 
 beginReceiving :: Connection -> IO ()
-beginReceiving conn = do
-  rs <- connGetReplies conn
-  writeIORef (connReplies conn) rs
-  writeIORef (connPending conn) rs
+beginReceiving conn = return ()
 
 disconnect :: Connection -> IO ()
 disconnect Conn{..} = CC.disconnect connCtx
@@ -76,22 +61,11 @@ send :: Connection -> S.ByteString -> IO ()
 send Conn{..} s = do
   CC.send connCtx s
 
-  -- Signal that we expect one more reply from Redis.
-  n <- atomicModifyIORef' connPendingCnt $ \n -> let n' = n+1 in (n', n')
-  -- Limit the "pipeline length". This is necessary in long pipelines, to avoid
-  -- thunk build-up, and thus space-leaks.
-  -- TODO find smallest max pending with good-enough performance.
-  when (n >= 1000) $ do
-    -- Force oldest pending reply.
-    r:_ <- readIORef connPending
-    r `seq` return ()
-
 -- |Take a reply-thunk from the list of future replies.
 recv :: Connection -> IO Reply
-recv Conn{..} = do
-  (r:rs) <- readIORef connReplies
-  writeIORef connReplies rs
-  return r
+recv conn@Conn{..} = do
+  flush conn
+  connGetReply
 
 -- | Flush the socket.  Normally, the socket is flushed in 'recv' (actually 'conGetReplies'), but
 -- for the multithreaded pub/sub code, the sending thread needs to explicitly flush the subscription
@@ -115,31 +89,20 @@ request conn req = send conn req >> recv conn
 --  thread-safe. 'Handle' as implemented by GHC is also threadsafe, it is safe
 --  to call 'hFlush' here. The list constructor '(:)' must be called from
 --  /within/ unsafeInterleaveIO, to keep the replies in correct order.
-connGetReplies :: Connection -> IO [Reply]
-connGetReplies conn@Conn{..} = go S.empty (SingleLine "previous of first")
+mkConnGetReply :: CC.ConnectionContext -> IO (IO Reply)
+mkConnGetReply connCtx = do
+  restRef <- newIORef S.empty
+  pure $ go restRef
   where
-    go rest previous = do
-      -- lazy pattern match to actually delay the receiving
-      ~(r, rest') <- unsafeInterleaveIO $ do
-        -- Force previous reply for correct order.
-        previous `seq` return ()
-        scanResult <- Scanner.scanWith readMore reply rest
-        case scanResult of
-          Scanner.Fail{}       -> CC.errConnClosed
-          Scanner.More{}    -> error "Hedis: parseWith returned Partial"
-          Scanner.Done rest' r -> do
-            -- r is the same as 'head' of 'connPending'. Since we just
-            -- received r, we remove it from the pending list.
-            atomicModifyIORef' connPending $ \case
-               (_:rs) -> (rs, ())
-               [] -> error "Hedis: impossible happened parseWith missing value that it just received"
-            -- We now expect one less reply from Redis. We don't count to
-            -- negative, which would otherwise occur during pubsub.
-            atomicModifyIORef' connPendingCnt $ \n -> (max 0 (n-1), ())
-            return (r, rest')
-      rs <- unsafeInterleaveIO (go rest' r)
-      return (r:rs)
+    go restRef = do
+      rest <- readIORef restRef
+      scanResult <- Scanner.scanWith readMore reply rest
+      case scanResult of
+        Scanner.Fail{}    -> CC.errConnClosed
+        Scanner.More{}    -> error "Hedis: parseWith returned Partial"
+        Scanner.Done rest' r -> do
+          writeIORef restRef rest'
+          return r
 
     readMore = CC.ioErrorToConnLost $ do
-      flush conn
       CC.recv connCtx
