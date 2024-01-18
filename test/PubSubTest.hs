@@ -1,23 +1,35 @@
 {-# LANGUAGE CPP, OverloadedStrings, DeriveDataTypeable #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NumericUnderscores #-}
 module PubSubTest (testPubSubThreaded) where
 
 import Control.Concurrent
 import Control.Monad
 import Control.Concurrent.Async
 import Control.Exception
+import qualified Data.List as List
 import Data.Typeable
 import qualified Data.List
-import Data.Text
-import Data.ByteString
+import Data.Text (Text)
+import Data.ByteString (ByteString)
 import Control.Concurrent.STM
 import qualified Test.Framework as Test
 import qualified Test.Framework.Providers.HUnit as Test (testCase)
 import qualified Test.HUnit as HUnit
+import System.Process (readProcessWithExitCode, rawSystem)
 
 import Database.Redis
+import Test.HUnit (assertFailure)
+import System.Exit (ExitCode(..))
+import Data.Bifunctor (first)
 
 testPubSubThreaded :: [Connection -> Test.Test]
-testPubSubThreaded = [removeAllTest, callbackErrorTest, removeFromUnregister]
+testPubSubThreaded =
+  [ removeAllTest
+  , callbackErrorTest
+  , removeFromUnregister
+  , recoverSubscriptionsTest
+  ]
 
 -- | A handler label to be able to distinguish the handlers from one another
 -- to help make sure we unregister the correct handler.
@@ -54,6 +66,65 @@ waitForPMessage ref label chan msg = atomically $ do
   lst <- readTVar ref
   unless (expected `Prelude.elem` lst) retry
   writeTVar ref $ Prelude.filter (/= expected) lst
+
+recoverSubscriptionsTest :: Connection -> Test.Test
+recoverSubscriptionsTest conn = Test.testCase "Recover subscriptions" $ do
+  mStart <- newEmptyMVar
+  res <- race (runPubSub mStart) (pubAndToppleRedis mStart)
+  HUnit.assertEqual "messages" (Left ["1", "2", "3", "4"]) $ first List.sort res
+
+  where
+    pubAndToppleRedis :: MVar () -> IO ()
+    pubAndToppleRedis mStart = do
+      -- wait until other thread thinks it's subscribed
+      readMVar mStart
+      runRedis conn $ publish "rec1" "1"
+      runRedis conn $ publish "rec2:a" "2"
+      do
+        (ex, _, _) <- readProcessWithExitCode "killall" ["-w", "redis-server"] ""
+        unless (ex == ExitSuccess) $ assertFailure "Couldn't kill redis"
+      race (threadDelay 1_000_000 >> rawSystem "redis-server" []) $ forever $ do
+        err <- try @IOException $ do
+          threadDelay 600_000
+          putStrLn "Publishing post-restart"
+          runRedis conn $ publish "rec1" "3"
+          runRedis conn $ publish "rec2:b" "4"
+        print $ "PUBLISHER: " <> show err
+      pure ()
+
+    runPubSub :: MVar () -> IO [ByteString]
+    runPubSub mStart = do
+      mOut <- newTVarIO []
+      ctrl <- newPubSubController [("rec1", handler' mOut)]
+                                  [("rec2:*", phandler' mOut)]
+      let sub = forever $ do
+            putStrLn "Running pubSubForever"
+            err <- try @IOException $ try @ConnectionLostException $ pubSubForever conn ctrl $ do putMVar mStart ()
+            putStrLn $ "SUBSCRIBER: " <> show err
+            threadDelay $ 1000 * 1000 -- 1s
+      let reader = untilJustM $ do
+            threadDelay 500_000 -- 0.5s
+            res <- readTVarIO mOut
+            print res
+            pure $ if length res < 4 then Nothing else Just res
+      race sub reader
+      putStrLn "Finished running pubSub"
+      readTVarIO mOut
+
+    handler' :: TVar [ByteString] -> ByteString -> IO ()
+    handler' var msg = do
+      putStrLn $ "Got message: " <> show msg
+      atomically $ modifyTVar var (msg:)
+
+    phandler' :: TVar [ByteString] -> RedisChannel -> ByteString -> IO ()
+    phandler' var = const $ handler' var
+
+untilJustM :: Monad m => m (Maybe a) -> m a
+untilJustM act = do
+    res <- act
+    case res of
+        Just r  -> pure r
+        Nothing -> untilJustM act
 
 expectRedisChannels :: Connection -> [RedisChannel] -> IO ()
 expectRedisChannels conn expected = do

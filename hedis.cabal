@@ -141,12 +141,13 @@ test-suite hedis-test
         async,
         stm,
         text,
+        process,
         mtl == 2.*,
         test-framework,
         test-framework-hunit,
         time
     -- We use -O0 here, since GHC takes *very* long to compile so many constants
-    ghc-options: -O0 -Wall -rtsopts -fno-warn-unused-do-bind
+    ghc-options: -O0 -Wall -rtsopts -fno-warn-unused-do-bind -threaded
     if flag(dev)
       ghc-options: -Werror
     if flag(dev)
@@ -167,6 +168,7 @@ test-suite redis7
         async,
         stm,
         text,
+        process,
         mtl == 2.*,
         test-framework,
         test-framework-hunit,
