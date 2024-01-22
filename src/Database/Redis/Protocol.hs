@@ -16,17 +16,12 @@ import GHC.Generics
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.Read as Text
+import Data.RESP
 import Control.Monad (replicateM)
 
--- |Low-level representation of replies from the Redis server.
-data Reply = SingleLine ByteString
-           | Error ByteString
-           | Integer Integer
-           | Bulk (Maybe ByteString)
-           | MultiBulk (Maybe [Reply])
-         deriving (Eq, Show, Generic)
+type Reply = RespReply
 
-instance NFData Reply
+instance NFData RespReply
 
 ------------------------------------------------------------------------------
 -- Request
