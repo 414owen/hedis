@@ -65,7 +65,7 @@ instance RedisResult CommandInfo where
             i | i >= 0 -> Required i
             i -> MinimumRequired $ abs i
         parseFlag :: Reply -> Either Reply Flag
-        parseFlag (SingleLine flag) = return $ case flag of
+        parseFlag (RespString flag) = return $ case flag of
             "write" -> Write
             "readonly" -> ReadOnly
             "denyoom" -> DenyOOM

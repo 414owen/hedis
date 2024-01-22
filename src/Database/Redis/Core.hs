@@ -72,7 +72,7 @@ reRedis r = Redis r
 runRedisInternal :: PP.Connection -> Redis a -> IO a
 runRedisInternal conn (Redis redis) = do
   -- Dummy reply in case no request is sent.
-  ref <- newIORef (SingleLine "nobody will ever see this")
+  ref <- newIORef (RespString "nobody will ever see this")
   r <- runReaderT redis (NonClusteredEnv conn ref)
   -- Evaluate last reply to keep lazy IO inside runRedis.
   readIORef ref >>= (`seq` return ())

@@ -63,8 +63,8 @@ instance RedisResult Reply where
     decode = Right
 
 instance RedisResult ByteString where
-    decode (SingleLine s)  = Right s
-    decode (Bulk (Just s)) = Right s
+    decode (RespString s)  = Right s
+    decode (RespArray (Just s)) = Right s
     decode r               = Left r
 
 instance RedisResult Integer where
@@ -81,14 +81,14 @@ instance RedisResult Double where
     decode r = maybe (Left r) (Right . fst) . F.readSigned F.readExponential =<< decode r
 
 instance RedisResult Status where
-    decode (SingleLine s) = Right $ case s of
+    decode (RespString s) = Right $ case s of
         "OK"     -> Ok
         "PONG"   -> Pong
         _        -> Status s
     decode r = Left r
 
 instance RedisResult RedisType where
-    decode (SingleLine s) = Right $ case s of
+    decode (RespString s) = Right $ case s of
         "none"   -> None
         "string" -> String
         "hash"   -> Hash

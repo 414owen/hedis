@@ -116,7 +116,7 @@ request conn req = send conn req >> recv conn
 --  to call 'hFlush' here. The list constructor '(:)' must be called from
 --  /within/ unsafeInterleaveIO, to keep the replies in correct order.
 connGetReplies :: Connection -> IO [Reply]
-connGetReplies conn@Conn{..} = go S.empty (SingleLine "previous of first")
+connGetReplies conn@Conn{..} = go S.empty (RespExpr $ RespString "previous of first")
   where
     go rest previous = do
       -- lazy pattern match to actually delay the receiving
