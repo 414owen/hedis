@@ -35,7 +35,7 @@ import qualified Database.Redis.Cluster as Cluster
 --  Please refer to the Command Type Signatures section of this page for more
 --  information.
 class (MonadRedis m) => RedisCtx m f | m -> f where
-    returnDecode :: RedisResult a => Reply -> m (f a)
+    returnDecode :: RedisResult a => RespExpr -> m (f a)
 
 class (Monad m) => MonadRedis m where
     liftRedis :: Redis a -> m a
@@ -47,7 +47,7 @@ instance {-# OVERLAPPABLE #-}
   ) => MonadRedis (t m) where
   liftRedis = lift . liftRedis
 
-instance RedisCtx Redis (Either Reply) where
+instance RedisCtx Redis (Either RespExpr) where
     returnDecode = return . decode
 
 instance MonadRedis Redis where
@@ -72,7 +72,7 @@ reRedis r = Redis r
 runRedisInternal :: PP.Connection -> Redis a -> IO a
 runRedisInternal conn (Redis redis) = do
   -- Dummy reply in case no request is sent.
-  ref <- newIORef (RespString "nobody will ever see this")
+  ref <- newIORef $ RespString "nobody will ever see this"
   r <- runReaderT redis (NonClusteredEnv conn ref)
   -- Evaluate last reply to keep lazy IO inside runRedis.
   readIORef ref >>= (`seq` return ())
@@ -84,15 +84,15 @@ runRedisClusteredInternal connection refreshShardmapAction (Redis redis) = do
     r `seq` return ()
     return r
 
-setLastReply :: Reply -> ReaderT RedisEnv IO ()
+setLastReply :: RespExpr -> ReaderT RedisEnv IO ()
 setLastReply r = do
   ref <- asks envLastReply
   lift (writeIORef ref r)
 
-recv :: (MonadRedis m) => m Reply
+recv :: (MonadRedis m) => m RespExpr
 recv = liftRedis $ Redis $ do
   conn <- asks envConn
-  r <- liftIO (PP.recv conn)
+  r <- liftIO (PP.recvExpr conn)
   setLastReply r
   return r
 

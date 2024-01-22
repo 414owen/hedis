@@ -49,7 +49,7 @@ instance RedisCtx RedisTx Queued where
 --
 --  'Queued' values are composable by utilizing the 'Functor', 'Applicative' or
 --  'Monad' interfaces.
-data Queued a = Queued (Vector Reply -> Either Reply a)
+data Queued a = Queued (Vector RespExpr -> Either RespExpr a)
 
 instance Functor Queued where
     fmap f (Queued g) = Queued (fmap f . g)
@@ -85,11 +85,11 @@ instance NFData a => NFData (TxResult a)
 --  (<http://redis.io/commands/watch>).
 watch
     :: [ByteString] -- ^ key
-    -> Redis (Either Reply Status)
+    -> Redis (Either RespExpr Status)
 watch key = sendRequest ("WATCH" : key)
 
 -- |Forget about all watched keys (<http://redis.io/commands/unwatch>).
-unwatch :: Redis (Either Reply Status)
+unwatch :: Redis (Either RespExpr Status)
 unwatch  = sendRequest ["UNWATCH"]
 
 
@@ -123,14 +123,12 @@ multiExec rtx = do
     r        <- exec
     case r of
         RespArray rs ->
-            return $ maybe
-                TxAborted
-                (either (TxError . show) TxSuccess . f . fromList)
-                rs
+            return $ either (TxError . show) TxSuccess $ f $ fromList rs
+        RespNull -> return TxAborted
         _ -> error $ "hedis: EXEC returned " ++ show r
 
-multi :: Redis (Either Reply Status)
+multi :: Redis (Either RespExpr Status)
 multi = sendRequest ["MULTI"]
 
-exec :: Redis Reply
+exec :: Redis RespExpr
 exec = either id id <$> sendRequest ["EXEC"]

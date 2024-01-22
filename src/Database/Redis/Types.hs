@@ -28,7 +28,7 @@ class RedisArg a where
     encode :: a -> ByteString
 
 class RedisResult a where
-    decode :: Reply -> Either Reply a
+    decode :: RespExpr -> Either RespExpr a
 
 ------------------------------------------------------------------------------
 -- RedisArg instances
@@ -59,25 +59,26 @@ instance NFData Status
 data RedisType = None | String | Hash | List | Set | ZSet
     deriving (Show, Eq)
 
-instance RedisResult Reply where
+instance RedisResult RespExpr where
     decode = Right
 
 instance RedisResult ByteString where
-    decode (RespString s)  = Right s
-    decode (RespArray (Just s)) = Right s
-    decode r               = Left r
+    decode (RespString s) = Right s
+    decode (RespBlob s)   = Right s
+    decode r              = Left r
 
 instance RedisResult Integer where
-    decode (Integer n) = Right n
+    decode (RespInteger n) = Right $ fromIntegral n
     decode r           =
         maybe (Left r) (Right . fst) . I.readSigned I.readDecimal =<< decode r
 
 instance RedisResult Int64 where
-    decode (Integer n) = Right (fromInteger n)
+    decode (RespInteger n) = Right n
     decode r           =
         maybe (Left r) (Right . fst) . I.readSigned I.readDecimal =<< decode r
 
 instance RedisResult Double where
+    decode (RespDouble d) = Right d
     decode r = maybe (Left r) (Right . fst) . F.readSigned F.readExponential =<< decode r
 
 instance RedisResult Status where
@@ -99,32 +100,33 @@ instance RedisResult RedisType where
     decode r = Left r
 
 instance RedisResult Bool where
-    decode (Integer 1)    = Right True
-    decode (Integer 0)    = Right False
-    decode (RespBlob Nothing) = Right False -- Lua boolean false = nil bulk reply
-    decode r              = Left r
+    decode (RespBool True)  = Right True
+    decode (RespBool False) = Right True
+    decode (RespInteger 1)  = Right True
+    decode (RespInteger 0)  = Right False
+    decode RespNull         = Right False -- Lua boolean false = nil bulk reply
+    decode r                = Left r
 
 instance (RedisResult a) => RedisResult (Maybe a) where
-    decode (RespBlob Nothing)      = Right Nothing
-    decode (RespArray Nothing) = Right Nothing
-    decode r                   = Just <$> decode r
+    decode RespNull = Right Nothing
+    decode r        = Just <$> decode r
 
 instance
 #if __GLASGOW_HASKELL__ >= 710
     {-# OVERLAPPABLE #-}
 #endif
     (RedisResult a) => RedisResult [a] where
-    decode (RespArray (Just rs)) = mapM decode rs
-    decode r                     = Left r
+    decode (RespArray rs) = mapM decode rs
+    decode r              = Left r
  
 instance (RedisResult a, RedisResult b) => RedisResult (a,b) where
-    decode (RespArray (Just [x, y])) = (,) <$> decode x <*> decode y
-    decode r                         = Left r
+    decode (RespArray [x, y]) = (,) <$> decode x <*> decode y
+    decode r                  = Left r
 
 instance (RedisResult k, RedisResult v) => RedisResult [(k,v)] where
     decode r = case r of
-                (RespArray (Just rs)) -> pairs rs
-                _                     -> Left r
+                (RespArray rs) -> pairs rs
+                _              -> Left r
       where
         pairs []         = Right []
         pairs (_:[])     = Left r

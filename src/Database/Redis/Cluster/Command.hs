@@ -6,7 +6,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.HashMap.Strict as HM
 import Database.Redis.Types(RedisResult(decode))
-import Database.Redis.Protocol(Reply(..))
+import Database.Redis.Protocol (RespExpr(..))
 
 data Flag
     = Write
@@ -44,27 +44,30 @@ data CommandInfo = CommandInfo
     } deriving (Show)
 
 instance RedisResult CommandInfo where
-    decode (RespArray (Just
-        [ RespBlob (Just commandName)
-        , Integer aritySpec
-        , RespArray (Just replyFlags)
-        , Integer firstKeyPos
-        , Integer lastKeyPos
-        , Integer replyStepCount])) = do
+    decode (RespArray
+        [ RespBlob commandName
+        , RespInteger aritySpec
+        , RespArray replyFlags
+        , RespInteger firstKeyPos
+        , RespInteger lastKeyPos
+        , RespInteger replyStepCount]) = do
             parsedFlags <- mapM parseFlag replyFlags
             lastKey <- parseLastKeyPos
             return $ CommandInfo
                 { name = commandName
-                , arity = parseArity aritySpec
+                , arity = parseArity $ fromIntegral aritySpec
                 , flags = parsedFlags
-                , firstKeyPosition = firstKeyPos
+                , firstKeyPosition = fromIntegral firstKeyPos
                 , lastKeyPosition = lastKey
-                , stepCount = replyStepCount
+                , stepCount = fromIntegral replyStepCount
                 } where
+
+        parseArity :: Integer -> AritySpec
         parseArity int = case int of
             i | i >= 0 -> Required i
             i -> MinimumRequired $ abs i
-        parseFlag :: Reply -> Either Reply Flag
+
+        parseFlag :: RespExpr -> Either RespExpr Flag
         parseFlag (RespString flag) = return $ case flag of
             "write" -> Write
             "readonly" -> ReadOnly
@@ -82,21 +85,23 @@ instance RedisResult CommandInfo where
             "movablekeys" -> MovableKeys
             other -> Other other
         parseFlag bad = Left bad
-        parseLastKeyPos :: Either Reply LastKeyPositionSpec
-        parseLastKeyPos = return $ case lastKeyPos of
+
+        parseLastKeyPos :: Either RespExpr LastKeyPositionSpec
+        parseLastKeyPos = return $ case fromIntegral lastKeyPos of
             i | i < 0 -> UnlimitedKeys (-i - 1)
             i -> LastKeyPosition i
+
     -- since redis 6.0
-    decode (RespArray (Just
-        [ name@(RespBlob (Just _))
-        , arity@(Integer _)
-        , flags@(RespArray (Just _))
-        , firstPos@(Integer _)
-        , lastPos@(Integer _)
-        , step@(Integer _)
+    decode (RespArray
+        [ name@(RespBlob _)
+        , arity@(RespInteger _)
+        , flags@(RespArray _)
+        , firstPos@(RespInteger _)
+        , lastPos@(RespInteger _)
+        , step@(RespInteger _)
         , RespArray _  -- ACL categories
-        ])) =
-        decode (RespArray (Just [name, arity, flags, firstPos, lastPos, step]))
+        ]) =
+        decode (RespArray [name, arity, flags, firstPos, lastPos, step])
 
     decode e = Left e
 

@@ -34,7 +34,9 @@ import           Data.Typeable
 import qualified Scanner
 import System.IO.Unsafe(unsafeInterleaveIO)
 
-import Database.Redis.Protocol(Reply(Error), renderRequest, reply)
+-- TODO(414owen): Check, are these (still) single-line errors?
+-- Maybe we need a way to get single or multi-line errors?
+import Database.Redis.Protocol(Reply, RespExpr(RespStringError), renderRequest, parseExpression)
 import qualified Database.Redis.Cluster.Command as CMD
 
 -- This module implements a clustered connection whilst maintaining
@@ -64,7 +66,7 @@ data PipelineState =
       -- sent
       Pending [[B.ByteString]]
       -- This pipeline has been executed, the replies are contained within it
-    | Executed [Reply]
+    | Executed [RespExpr]
       -- We're in a MULTI-EXEC transaction. All commands in the transaction
       -- should go to the same node, but we won't know what node that is until
       -- we see a command with a key. We're storing these transactions and will
@@ -122,7 +124,7 @@ disconnect (Connection nodeConnMap _ _ _) = mapM_ disconnectNode (HM.elems nodeC
 -- Add a request to the current pipeline for this connection. The pipeline will
 -- be executed implicitly as soon as any result returned from this function is
 -- evaluated.
-requestPipelined :: IO ShardMap -> Connection -> [B.ByteString] -> IO Reply
+requestPipelined :: IO ShardMap -> Connection -> [B.ByteString] -> IO RespExpr
 requestPipelined refreshAction conn@(Connection _ pipelineVar shardMapVar _) nextRequest = modifyMVar pipelineVar $ \(Pipeline stateVar) -> do
     (newStateVar, repliesIndex) <- hasLocked $ modifyMVar stateVar $ \case
         Pending requests | isMulti nextRequest -> do
@@ -169,7 +171,7 @@ isExec ("EXEC" : _) = True
 isExec _ = False
 
 data PendingRequest = PendingRequest Int [B.ByteString]
-data CompletedRequest = CompletedRequest Int [B.ByteString] Reply
+data CompletedRequest = CompletedRequest Int [B.ByteString] RespExpr
 
 rawRequest :: PendingRequest -> [B.ByteString]
 rawRequest (PendingRequest _ r) =  r
@@ -177,7 +179,7 @@ rawRequest (PendingRequest _ r) =  r
 responseIndex :: CompletedRequest -> Int
 responseIndex (CompletedRequest i _ _) = i
 
-rawResponse :: CompletedRequest -> Reply
+rawResponse :: CompletedRequest -> RespExpr
 rawResponse (CompletedRequest _ _ r) = r
 
 -- The approach we take here is similar to that taken by the redis-py-cluster
@@ -191,7 +193,7 @@ rawResponse (CompletedRequest _ _ r) = r
 -- step is not pipelined, there is a request per error. This is probably
 -- acceptable in most cases as these errors should only occur in the case of
 -- cluster reconfiguration events, which should be rare.
-evaluatePipeline :: MVar ShardMap -> IO ShardMap -> Connection -> [[B.ByteString]] -> IO [Reply]
+evaluatePipeline :: MVar ShardMap -> IO ShardMap -> Connection -> [[B.ByteString]] -> IO [RespExpr]
 evaluatePipeline shardMapVar refreshShardmapAction conn requests = do
         shardMap <- hasLocked $ readMVar shardMapVar
         requestsByNode <- getRequestsByNode shardMap
@@ -222,12 +224,12 @@ evaluatePipeline shardMapVar refreshShardmapAction conn requests = do
 -- Retry a batch of requests if any of the responses is a redirect instruction.
 -- If multiple requests are passed in they're assumed to be a MULTI..EXEC
 -- transaction and will all be retried.
-retryBatch :: MVar ShardMap -> IO ShardMap -> Connection -> Int -> [[B.ByteString]] -> [Reply] -> IO [Reply]
+retryBatch :: MVar ShardMap -> IO ShardMap -> Connection -> Int -> [[B.ByteString]] -> [RespExpr] -> IO [RespExpr]
 retryBatch shardMapVar refreshShardmapAction conn retryCount requests replies =
     -- The last reply will be the `EXEC` reply containing the redirection, if
     -- there is one.
     case last replies of
-        (Error errString) | B.isPrefixOf "MOVED" errString -> do
+        (RespStringError errString) | B.isPrefixOf "MOVED" errString -> do
             let (Connection _ _ _ infoMap) = conn
             keys <- mconcat <$> mapM (requestKeys infoMap) requests
             hashSlot <- hashSlotForKeys (CrossSlotException requests) keys
@@ -247,7 +249,7 @@ retryBatch shardMapVar refreshShardmapAction conn retryCount requests replies =
 
 -- Like `evaluateOnPipeline`, except we expect to be able to run all commands
 -- on a single shard. Failing to meet this expectation is an error.
-evaluateTransactionPipeline :: MVar ShardMap -> IO ShardMap -> Connection -> [[B.ByteString]] -> IO [Reply]
+evaluateTransactionPipeline :: MVar ShardMap -> IO ShardMap -> Connection -> [[B.ByteString]] -> IO [RespExpr]
 evaluateTransactionPipeline shardMapVar refreshShardmapAction conn requests' = do
     let requests = reverse requests'
     let (Connection _ _ _ infoMap) = conn
@@ -321,8 +323,8 @@ requestKeys infoMap request =
         Nothing -> throwIO $ UnsupportedClusterCommandException request
         Just k -> return k
 
-askingRedirection :: Reply -> Maybe (Host, Port)
-askingRedirection (Error errString) = case Char8.words errString of
+askingRedirection :: RespExpr -> Maybe (Host, Port)
+askingRedirection (RespStringError errString) = case Char8.words errString of
     ["ASK", _, hostport] -> case Char8.split ':' hostport of
        [host, portString] -> case Char8.readInt portString of
          Just (port,"") -> Just (Char8.unpack host, port)
@@ -331,8 +333,8 @@ askingRedirection (Error errString) = case Char8.words errString of
     _ -> Nothing
 askingRedirection _ = Nothing
 
-moved :: Reply -> Bool
-moved (Error errString) = case Char8.words errString of
+moved :: RespExpr -> Bool
+moved (RespStringError errString) = case Char8.words errString of
     "MOVED":_ -> True
     _ -> False
 moved _ = False
@@ -369,7 +371,7 @@ allMasterNodes (Connection nodeConns _ _ _) (ShardMap shardMap) =
   where
     masterNodes = (\(Shard master _) -> master) <$> nub (IntMap.elems shardMap)
 
-requestNode :: NodeConnection -> [[B.ByteString]] -> IO [Reply]
+requestNode :: NodeConnection -> [[B.ByteString]] -> IO [RespExpr]
 requestNode (NodeConnection ctx lastRecvRef _) requests = do
     mapM_ (sendNode . renderRequest) requests
     _ <- CC.flush ctx
@@ -379,12 +381,13 @@ requestNode (NodeConnection ctx lastRecvRef _) requests = do
 
     sendNode :: B.ByteString -> IO ()
     sendNode = CC.send ctx
-    recvNode :: IO Reply
+
+    recvNode :: IO RespExpr
     recvNode = do
         maybeLastRecv <- IOR.readIORef lastRecvRef
         scanResult <- case maybeLastRecv of
-            Just lastRecv -> Scanner.scanWith (CC.recv ctx) reply lastRecv
-            Nothing -> Scanner.scanWith (CC.recv ctx) reply B.empty
+            Just lastRecv -> Scanner.scanWith (CC.recv ctx) parseExpression lastRecv
+            Nothing -> Scanner.scanWith (CC.recv ctx) parseExpression B.empty
 
         case scanResult of
           Scanner.Fail{}       -> CC.errConnClosed

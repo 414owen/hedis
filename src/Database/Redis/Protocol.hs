@@ -2,7 +2,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Database.Redis.Protocol (Reply, RespReply(..), RespExpr(..), reply, renderRequest) where
+module Database.Redis.Protocol
+  ( Reply, RespReply(..), RespExpr(..)
+  , reply, renderRequest, parseExpression
+  ) where
 
 import Prelude hiding (error, take)
 #if __GLASGOW_HASKELL__ < 710

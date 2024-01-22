@@ -17,7 +17,7 @@
 --
 module Database.Redis.ProtocolPipelining (
   Connection,
-  connect, enableTLS, beginReceiving, disconnect, request, send, recv, flush, fromCtx
+  connect, enableTLS, beginReceiving, disconnect, request, send, recv, flush, fromCtx, recvExpr
 ) where
 
 import           Prelude
@@ -35,6 +35,7 @@ import qualified Database.Redis.ConnectionContext as CC
 data Connection = Conn
   { connCtx        :: CC.ConnectionContext -- ^ Connection socket-handle.
   , connReplies    :: IORef [Reply] -- ^ Reply thunks for unsent requests.
+  , connExprs      :: IORef [RespExpr] -- ^ Same list as 'connReplies', but with push messages filtered out
   , connPending    :: IORef [Reply]
     -- ^ Reply thunks for requests "in the pipeline". Refers to the same list as
     --   'connReplies', but can have an offset.
@@ -46,12 +47,13 @@ data Connection = Conn
 
 
 fromCtx :: CC.ConnectionContext -> IO Connection
-fromCtx ctx = Conn ctx <$> newIORef [] <*> newIORef [] <*> newIORef 0
+fromCtx ctx = Conn ctx <$> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef 0
 
 connect :: NS.HostName -> CC.PortID -> Maybe Int -> IO Connection
 connect hostName portId timeoutOpt = do
     connCtx <- CC.connect hostName portId timeoutOpt
     connReplies <- newIORef []
+    connExprs <- newIORef []
     connPending <- newIORef []
     connPendingCnt <- newIORef 0
     return Conn{..}
@@ -93,6 +95,12 @@ recv Conn{..} = do
   writeIORef connReplies rs
   return r
 
+recvExpr :: Connection -> IO RespExpr
+recvExpr Conn{..} = do
+  (r:rs) <- readIORef connExprs
+  writeIORef connExprs rs
+  return r
+
 -- | Flush the socket.  Normally, the socket is flushed in 'recv' (actually 'conGetReplies'), but
 -- for the multithreaded pub/sub code, the sending thread needs to explicitly flush the subscription
 -- change requests.
@@ -100,8 +108,8 @@ flush :: Connection -> IO ()
 flush Conn{..} = CC.flush connCtx
 
 -- |Send a request and receive the corresponding reply
-request :: Connection -> S.ByteString -> IO Reply
-request conn req = send conn req >> recv conn
+request :: Connection -> S.ByteString -> IO RespExpr
+request conn req = send conn req >> recvExpr conn
 
 -- |A list of all future 'Reply's of the 'Connection'.
 --
