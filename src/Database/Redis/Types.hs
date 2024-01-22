@@ -101,12 +101,12 @@ instance RedisResult RedisType where
 instance RedisResult Bool where
     decode (Integer 1)    = Right True
     decode (Integer 0)    = Right False
-    decode (Bulk Nothing) = Right False -- Lua boolean false = nil bulk reply
+    decode (RespBlob Nothing) = Right False -- Lua boolean false = nil bulk reply
     decode r              = Left r
 
 instance (RedisResult a) => RedisResult (Maybe a) where
-    decode (Bulk Nothing)      = Right Nothing
-    decode (MultiBulk Nothing) = Right Nothing
+    decode (RespBlob Nothing)      = Right Nothing
+    decode (RespArray Nothing) = Right Nothing
     decode r                   = Just <$> decode r
 
 instance
@@ -114,16 +114,16 @@ instance
     {-# OVERLAPPABLE #-}
 #endif
     (RedisResult a) => RedisResult [a] where
-    decode (MultiBulk (Just rs)) = mapM decode rs
+    decode (RespArray (Just rs)) = mapM decode rs
     decode r                     = Left r
  
 instance (RedisResult a, RedisResult b) => RedisResult (a,b) where
-    decode (MultiBulk (Just [x, y])) = (,) <$> decode x <*> decode y
+    decode (RespArray (Just [x, y])) = (,) <$> decode x <*> decode y
     decode r                         = Left r
 
 instance (RedisResult k, RedisResult v) => RedisResult [(k,v)] where
     decode r = case r of
-                (MultiBulk (Just rs)) -> pairs rs
+                (RespArray (Just rs)) -> pairs rs
                 _                     -> Left r
       where
         pairs []         = Right []

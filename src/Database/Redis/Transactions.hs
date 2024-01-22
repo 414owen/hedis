@@ -122,7 +122,7 @@ multiExec rtx = do
     Queued f <- runRedisTx rtx
     r        <- exec
     case r of
-        MultiBulk rs ->
+        RespArray rs ->
             return $ maybe
                 TxAborted
                 (either (TxError . show) TxSuccess . f . fromList)

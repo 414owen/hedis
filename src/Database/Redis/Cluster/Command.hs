@@ -44,10 +44,10 @@ data CommandInfo = CommandInfo
     } deriving (Show)
 
 instance RedisResult CommandInfo where
-    decode (MultiBulk (Just
-        [ Bulk (Just commandName)
+    decode (RespArray (Just
+        [ RespBlob (Just commandName)
         , Integer aritySpec
-        , MultiBulk (Just replyFlags)
+        , RespArray (Just replyFlags)
         , Integer firstKeyPos
         , Integer lastKeyPos
         , Integer replyStepCount])) = do
@@ -87,16 +87,16 @@ instance RedisResult CommandInfo where
             i | i < 0 -> UnlimitedKeys (-i - 1)
             i -> LastKeyPosition i
     -- since redis 6.0
-    decode (MultiBulk (Just
-        [ name@(Bulk (Just _))
+    decode (RespArray (Just
+        [ name@(RespBlob (Just _))
         , arity@(Integer _)
-        , flags@(MultiBulk (Just _))
+        , flags@(RespArray (Just _))
         , firstPos@(Integer _)
         , lastPos@(Integer _)
         , step@(Integer _)
-        , MultiBulk _  -- ACL categories
+        , RespArray _  -- ACL categories
         ])) =
-        decode (MultiBulk (Just [name, arity, flags, firstPos, lastPos, step]))
+        decode (RespArray (Just [name, arity, flags, firstPos, lastPos, step]))
 
     decode e = Left e
 
