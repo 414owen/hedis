@@ -32,7 +32,7 @@ import qualified Data.HashMap.Strict as HM
 
 import qualified Database.Redis.ProtocolPipelining as PP
 import Database.Redis.Core(Redis, runRedisInternal, runRedisClusteredInternal)
-import Database.Redis.Protocol(Reply(..))
+import Database.Redis.Protocol(Reply, RespExpr(..))
 import Database.Redis.Cluster(ShardMap(..), Node, Shard(..))
 import qualified Database.Redis.Cluster as Cluster
 import qualified Database.Redis.ConnectionContext as CC
@@ -99,8 +99,8 @@ data ConnectInfo = ConnInfo
     -- ^ Optional TLS parameters. TLS will be enabled if this is provided.
     } deriving Show
 
-data ConnectError = ConnectAuthError Reply
-                  | ConnectSelectError Reply
+data ConnectError = ConnectAuthError RespExpr
+                  | ConnectSelectError RespExpr
     deriving (Eq, Show, Typeable)
 
 instance Exception ConnectError
@@ -204,7 +204,7 @@ runRedis (NonClusteredConnection pool) redis =
 runRedis (ClusteredConnection _ pool) redis =
     withResource pool $ \conn -> runRedisClusteredInternal conn (refreshShardMap conn) redis
 
-newtype ClusterConnectError = ClusterConnectError Reply
+newtype ClusterConnectError = ClusterConnectError RespExpr
     deriving (Eq, Show, Typeable)
 
 instance Exception ClusterConnectError

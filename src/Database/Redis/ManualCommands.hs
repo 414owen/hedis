@@ -6,6 +6,7 @@ import Prelude hiding (min, max)
 import Data.ByteString (ByteString, empty, append)
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString as BS
+import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (maybeToList, catMaybes)
@@ -82,7 +83,7 @@ data Slowlog = Slowlog
     } deriving (Show, Eq)
 
 instance RedisResult Slowlog where
-    decode (RespArray (Just [logId,timestamp,micros,cmd])) = do
+    decode (RespArray [logId,timestamp,micros,cmd]) = do
         slowlogId        <- decode logId
         slowlogTimestamp <- decode timestamp
         slowlogMicros    <- decode micros
@@ -90,7 +91,7 @@ instance RedisResult Slowlog where
         let slowlogClientIpAndPort = Nothing
             slowlogClientName = Nothing
         return Slowlog{..}
-    decode (RespArray (Just [logId,timestamp,micros,cmd,ip,cname])) = do
+    decode (RespArray [logId,timestamp,micros,cmd,ip,cname]) = do
         slowlogId        <- decode logId
         slowlogTimestamp <- decode timestamp
         slowlogMicros    <- decode micros
@@ -778,8 +779,8 @@ instance RedisArg Cursor where
 
 
 instance RedisResult Cursor where
-  decode (RespBlob (Just s)) = Right $ Cursor s
-  decode r               = Left r
+  decode (RespBlob s) = Right $ Cursor s
+  decode r            = Left r
 
 
 cursor0 :: Cursor
@@ -1023,17 +1024,17 @@ data XAutoclaimResult resultFormat = XAutoclaimResult {
 } deriving (Show, Eq)
 
 instance RedisResult a => RedisResult (XAutoclaimResult a) where
-    decode (RespArray (Just [
-        RespBlob (Just xAutoclaimResultId) ,
+    decode (RespArray [
+        RespBlob xAutoclaimResultId ,
         claimedMsg,
-        deletedMsg])) = do
+        deletedMsg]) = do
             xAutoclaimClaimedMessages <- decode claimedMsg
             xAutoclaimDeletedMessages <- decode deletedMsg
             Right XAutoclaimResult{..}
-    decode (RespArray (Just [
-        RespBlob (Just xAutoclaimResultId) ,
-        RespArray (Just [])
-        ])) = do
+    decode (RespArray [
+        RespBlob xAutoclaimResultId ,
+        RespArray []
+        ]) = do
             let xAutoclaimClaimedMessages = []
             let xAutoclaimDeletedMessages = []
             Right XAutoclaimResult{..}
@@ -1134,7 +1135,7 @@ data StreamsRecord = StreamsRecord
     } deriving (Show, Eq)
 
 instance RedisResult StreamsRecord where
-    decode (RespArray (Just [RespBlob (Just recordId), RespArray (Just rawKeyValues)])) = do
+    decode (RespArray [RespBlob recordId, RespArray rawKeyValues]) = do
         keyValuesList <- mapM decode rawKeyValues
         let keyValues = decodeKeyValues keyValuesList
         return StreamsRecord{..}
@@ -1167,7 +1168,7 @@ data XReadResponse = XReadResponse
     } deriving (Show, Eq)
 
 instance RedisResult XReadResponse where
-    decode (RespArray (Just [RespBlob (Just stream), RespArray (Just rawRecords)])) = do
+    decode (RespArray [RespBlob stream, RespArray rawRecords]) = do
         records <- mapM decode rawRecords
         return XReadResponse{..}
     decode a = Left a
@@ -1314,7 +1315,7 @@ xgroupDelConsumer
     => ByteString -- ^ Stream name.
     -> ByteString -- ^ Consumer group name.
     -> ByteString -- ^ Consumer name.
-    -> m (f Integer) -- ^ The number of pending messages owned by the consumer.
+    -> m (f Int64) -- ^ The number of pending messages owned by the consumer.
 xgroupDelConsumer stream group consumer = sendRequest ["XGROUP", "DELCONSUMER", stream, group, consumer]
 
 -- | /O(1)/ destroys a group.
@@ -1330,7 +1331,7 @@ xack
     => ByteString -- ^ stream
     -> ByteString -- ^ group name
     -> [ByteString] -- ^ message IDs
-    -> m (f Integer)
+    -> m (f Int64)
 xack stream groupName messageIds = sendRequest $ ["XACK", stream, groupName] ++ messageIds
 
 xrange
@@ -1338,7 +1339,7 @@ xrange
     => ByteString -- ^ stream
     -> ByteString -- ^ start
     -> ByteString -- ^ end
-    -> Maybe Integer -- ^ COUNT
+    -> Maybe Int64 -- ^ COUNT
     -> m (f [StreamsRecord])
 xrange stream start end count = sendRequest $ ["XRANGE", stream, start, end] ++ countArgs
     where countArgs = maybe [] (\c -> ["COUNT", encode c]) count
@@ -1348,7 +1349,7 @@ xrevRange
     => ByteString -- ^ stream
     -> ByteString -- ^ end
     -> ByteString -- ^ start
-    -> Maybe Integer -- ^ COUNT
+    -> Maybe Int64 -- ^ COUNT
     -> m (f [StreamsRecord])
 xrevRange stream end start count = sendRequest $ ["XREVRANGE", stream, end, start] ++ countArgs
     where countArgs = maybe [] (\c -> ["COUNT", encode c]) count
@@ -1360,25 +1361,25 @@ xlen
 xlen stream = sendRequest ["XLEN", stream]
 
 data XPendingSummaryResponse = XPendingSummaryResponse
-    { numPendingMessages :: Integer
+    { numPendingMessages :: Int64
     , smallestPendingMessageId :: ByteString
     , largestPendingMessageId :: ByteString
-    , numPendingMessagesByconsumer :: [(ByteString, Integer)]
+    , numPendingMessagesByconsumer :: [(ByteString, Int64)]
     } deriving (Show, Eq)
 
 instance RedisResult XPendingSummaryResponse where
-    decode (RespArray (Just [
-        Integer numPendingMessages,
-        RespBlob (Just smallestPendingMessageId),
-        RespBlob (Just largestPendingMessageId),
-        RespArray (Just [RespArray (Just rawGroupsAndCounts)])])) = do
+    decode (RespArray [
+        RespInteger numPendingMessages,
+        RespBlob smallestPendingMessageId,
+        RespBlob largestPendingMessageId,
+        RespArray [RespArray rawGroupsAndCounts]]) = do
             let groupsAndCounts = chunksOfTwo rawGroupsAndCounts
             numPendingMessagesByconsumer <- decodeGroupsAndCounts groupsAndCounts
             return XPendingSummaryResponse{..}
             where
-                decodeGroupsAndCounts :: [(Reply, Reply)] -> Either Reply [(ByteString, Integer)]
+                decodeGroupsAndCounts :: [(RespExpr, RespExpr)] -> Either RespExpr [(ByteString, Int64)]
                 decodeGroupsAndCounts bs = sequence $ map decodeGroupCount bs
-                decodeGroupCount :: (Reply, Reply) -> Either Reply (ByteString, Integer)
+                decodeGroupCount :: (RespExpr, RespExpr) -> Either RespExpr (ByteString, Int64)
                 decodeGroupCount (x, y) = do
                     decodedX <- decode x
                     decodedY <- decode y
@@ -1403,16 +1404,16 @@ xpendingSummary stream group = sendRequest $ ["XPENDING", stream, group]
 data XPendingDetailRecord = XPendingDetailRecord
     { messageId :: ByteString
     , consumer :: ByteString
-    , millisSinceLastDelivered :: Integer
-    , numTimesDelivered :: Integer
+    , millisSinceLastDelivered :: Int64
+    , numTimesDelivered :: Int64
     } deriving (Show, Eq)
 
 instance RedisResult XPendingDetailRecord where
-    decode (RespArray (Just [
-        RespBlob (Just messageId) ,
-        RespBlob (Just consumer),
-        Integer millisSinceLastDelivered,
-        Integer numTimesDelivered])) = Right XPendingDetailRecord{..}
+    decode (RespArray [
+        RespBlob messageId ,
+        RespBlob consumer,
+        RespInteger millisSinceLastDelivered,
+        RespInteger numTimesDelivered]) = Right XPendingDetailRecord{..}
     decode a = Left a
 
 -- | Additional parameters of the xpending call family
@@ -1514,9 +1515,9 @@ xclaimJustIds stream group consumer minIdleTime opts messageIds = sendRequest $
 -- | Data structure that is returned as a result of  'xinfoConsumers'
 data XInfoConsumersResponse = XInfoConsumersResponse
     { xinfoConsumerName :: ByteString -- ^ The name of the consumer.
-    , xinfoConsumerNumPendingMessages :: Integer -- ^ The number of entries in the PEL (pending elemeent list): pending messages for the consumer, which are messages that were delivered but are yet to be acknowledged
-    , xinfoConsumerIdleTime :: Integer -- ^ The number of milliseconds that have passed since the consumer's last attempted interaction (Examples: 'xreadGroup', 'xclam', 'xautoclaim')
-    , xinfoConsumerInactive :: Maybe Integer
+    , xinfoConsumerNumPendingMessages :: Int64 -- ^ The number of entries in the PEL (pending elemeent list): pending messages for the consumer, which are messages that were delivered but are yet to be acknowledged
+    , xinfoConsumerIdleTime :: Int64 -- ^ The number of milliseconds that have passed since the consumer's last attempted interaction (Examples: 'xreadGroup', 'xclam', 'xautoclaim')
+    , xinfoConsumerInactive :: Maybe Int64
     {- ^ The number of milliseconds that have passed since the consumer's last successful interaction (Examples: 'xreadGroup' that actually read some entries into the PEL, 'xclaim'/'xautoclaim' that actually claimed some entries)
 
     @since Redis 7.0: always @Nothing@ for previous versions.
@@ -1525,24 +1526,24 @@ data XInfoConsumersResponse = XInfoConsumersResponse
 
 instance RedisResult XInfoConsumersResponse where
     decode = decodeRedis6 <> decodeRedis7
-      where decodeRedis6 (RespArray (Just [
-                RespBlob (Just "name"),
-                RespBlob (Just xinfoConsumerName),
-                RespBlob (Just "pending"),
-                Integer xinfoConsumerNumPendingMessages,
-                RespBlob (Just "idle"),
-                Integer xinfoConsumerIdleTime])) = Right XInfoConsumersResponse{xinfoConsumerInactive = Nothing, ..}
+      where decodeRedis6 (RespArray [
+                RespBlob "name",
+                RespBlob xinfoConsumerName,
+                RespBlob "pending",
+                RespInteger xinfoConsumerNumPendingMessages,
+                RespBlob "idle",
+                RespInteger xinfoConsumerIdleTime]) = Right XInfoConsumersResponse{xinfoConsumerInactive = Nothing, ..}
             decodeRedis6 a = Left a
 
-            decodeRedis7 (RespArray (Just [
-                RespBlob (Just "name"),
-                RespBlob (Just xinfoConsumerName),
-                RespBlob (Just "pending"),
-                Integer xinfoConsumerNumPendingMessages,
-                RespBlob (Just "idle"),
-                Integer xinfoConsumerIdleTime,
-                RespBlob (Just "inactive"),
-                Integer xinfoConsumerInactive])) = Right XInfoConsumersResponse{xinfoConsumerInactive = Just xinfoConsumerInactive, ..}
+            decodeRedis7 (RespArray [
+                RespBlob "name",
+                RespBlob xinfoConsumerName,
+                RespBlob "pending",
+                RespInteger xinfoConsumerNumPendingMessages,
+                RespBlob "idle",
+                RespInteger xinfoConsumerIdleTime,
+                RespBlob "inactive",
+                RespInteger xinfoConsumerInactive]) = Right XInfoConsumersResponse{xinfoConsumerInactive =Just xinfoConsumerInactive, ..}
             decodeRedis7 a = Left a
 
 -- | /O(1)/
@@ -1561,15 +1562,15 @@ xinfoConsumers stream group = sendRequest $ ["XINFO", "CONSUMERS", stream, group
 -- | Result of the 'xinfoGroups' call.
 data XInfoGroupsResponse = XInfoGroupsResponse
     { xinfoGroupsGroupName :: ByteString -- ^ Name of the consumer group.
-    , xinfoGroupsNumConsumers :: Integer -- ^ The number of consumers in the group.
-    , xinfoGroupsNumPendingMessages :: Integer -- ^ The length of the group's pending entries list (PEL), which are messages that were delivered but are yet to be acknowledged.
+    , xinfoGroupsNumConsumers :: Int64 -- ^ The number of consumers in the group.
+    , xinfoGroupsNumPendingMessages :: Int64 -- ^ The length of the group's pending entries list (PEL), which are messages that were delivered but are yet to be acknowledged.
     , xinfoGroupsLastDeliveredMessageId :: ByteString -- ^ The ID of the last entry delivered to the group's consumers.
-    , xinfoGroupsEntriesRead :: Maybe Integer
+    , xinfoGroupsEntriesRead :: Maybe Int64
     {- ^ The logical "read counter" of the last entry delivered to group's consumers.
 
     Since Redis 7.0: always @Nothing@ on the previous versions.
     -}
-    , xinfoGroupsLag :: Maybe Integer
+    , xinfoGroupsLag :: Maybe Int64
     {- ^ the number of entries in the stream that are still waiting to be delivered to the group's consumers, or a Nothing when that number can't be determined.
 
     Since Redis 7.0: always @Nothing@ on the previous versions.
@@ -1578,25 +1579,25 @@ data XInfoGroupsResponse = XInfoGroupsResponse
 
 instance RedisResult XInfoGroupsResponse where
     decode = decodeRedis6 <> decodeRedis7
-      where decodeRedis6 (RespArray (Just [
-              RespBlob (Just "name"),      RespBlob (Just xinfoGroupsGroupName),
-              RespBlob (Just "consumers"), Integer xinfoGroupsNumConsumers,
-              RespBlob (Just "pending"),   Integer xinfoGroupsNumPendingMessages,
-              RespBlob (Just "last-delivered-id"),
-              RespBlob (Just xinfoGroupsLastDeliveredMessageId)])) =
+      where decodeRedis6 (RespArray [
+              RespBlob "name",      RespBlob xinfoGroupsGroupName,
+              RespBlob "consumers", RespInteger xinfoGroupsNumConsumers,
+              RespBlob "pending",   RespInteger xinfoGroupsNumPendingMessages,
+              RespBlob "last-delivered-id",
+              RespBlob xinfoGroupsLastDeliveredMessageId]) =
                 Right XInfoGroupsResponse{
                       xinfoGroupsEntriesRead = Nothing
                     , xinfoGroupsLag         = Nothing
                     , ..}
             decodeRedis6 a = Left a
 
-            decodeRedis7 (RespArray (Just [
-              RespBlob (Just "name"),              RespBlob (Just xinfoGroupsGroupName),
-              RespBlob (Just "consumers"),         Integer xinfoGroupsNumConsumers,
-              RespBlob (Just "pending"),           Integer xinfoGroupsNumPendingMessages,
-              RespBlob (Just "last-delivered-id"), RespBlob (Just xinfoGroupsLastDeliveredMessageId),
-              RespBlob (Just "entries-read"),      Integer xinfoGroupsEntriesRead,
-              RespBlob (Just "lag"),               Integer xinfoGroupsLag])) =
+            decodeRedis7 (RespArray [
+              RespBlob "name",              RespBlob xinfoGroupsGroupName,
+              RespBlob "consumers",         RespInteger xinfoGroupsNumConsumers,
+              RespBlob "pending",           RespInteger xinfoGroupsNumPendingMessages,
+              RespBlob "last-delivered-id", RespBlob xinfoGroupsLastDeliveredMessageId,
+              RespBlob "entries-read",      RespInteger xinfoGroupsEntriesRead,
+              RespBlob "lag",               RespInteger xinfoGroupsLag]) =
                 Right XInfoGroupsResponse{
                       xinfoGroupsEntriesRead = Just xinfoGroupsEntriesRead
                     , xinfoGroupsLag         = Just xinfoGroupsLag
@@ -1616,15 +1617,15 @@ xinfoGroups stream = sendRequest ["XINFO", "GROUPS", stream]
 
 data XInfoStreamResponse
     = XInfoStreamResponse
-    { xinfoStreamLength :: Integer -- ^ The number of entries in the stream.
-    , xinfoStreamRadixTreeKeys :: Integer -- ^ The number of keys in the underlying radix data structure.
-    , xinfoStreamRadixTreeNodes :: Integer -- ^ The number of nodes in the underlying radix data structure.
+    { xinfoStreamLength :: Int64 -- ^ The number of entries in the stream.
+    , xinfoStreamRadixTreeKeys :: Int64 -- ^ The number of keys in the underlying radix data structure.
+    , xinfoStreamRadixTreeNodes :: Int64 -- ^ The number of nodes in the underlying radix data structure.
     , xinfoMaxDeletedEntryId :: Maybe ByteString
     {- ^ The maximal entry ID that was deleted from the stream
 
     Since Redis 7.0: always returns @Nothing@ on the previous versions.
     -}
-    , xinfoEntriesAdded :: Maybe Integer
+    , xinfoEntriesAdded :: Maybe Int64
     {- ^ The count of all entries added to the stream during its lifetime
 
     Since Redis 7.0: always returns @Nothing@ on the previous versions.
@@ -1634,21 +1635,21 @@ data XInfoStreamResponse
 
     Since Redis 7.0: always returns @Nothing@ on the previous versions.
     -}
-    , xinfoStreamNumGroups :: Integer -- ^ The number of consumer groups defined for the stream.
+    , xinfoStreamNumGroups :: Int64 -- ^ The number of consumer groups defined for the stream.
     , xinfoStreamLastEntryId :: ByteString -- ^ ID of the last entry in the stream.
     , xinfoStreamFirstEntry :: StreamsRecord -- ^ ID and field-value tuples of the first entry in the stream.
     , xinfoStreamLastEntry :: StreamsRecord -- ^ ID and field-value tuples of the last entry in the stream.
     }
     | XInfoStreamEmptyResponse
-    { xinfoStreamLength :: Integer -- ^ The number of entries in the stream.
-    , xinfoStreamRadixTreeKeys :: Integer -- ^ The number of keys in the underlying radix data structure.
-    , xinfoStreamRadixTreeNodes :: Integer -- ^ The number of nodes in the underlying radix data structure.
+    { xinfoStreamLength :: Int64 -- ^ The number of entries in the stream.
+    , xinfoStreamRadixTreeKeys :: Int64 -- ^ The number of keys in the underlying radix data structure.
+    , xinfoStreamRadixTreeNodes :: Int64 -- ^ The number of nodes in the underlying radix data structure.
     , xinfoMaxDeletedEntryId :: Maybe ByteString
     {- ^ The maximal entry ID that was deleted from the stream.
 
     Since Redis 7.0: always returns @Nothing@ on the previous versions.
     -}
-    , xinfoEntriesAdded :: Maybe Integer
+    , xinfoEntriesAdded :: Maybe Int64
     {- ^ The count of all entries added to the stream during its lifetime
 
     Since Redis 7.0: always returns @Nothing@ on the previous versions.
@@ -1658,7 +1659,7 @@ data XInfoStreamResponse
 
     Since Redis 7.0: always returns @Nothing@ on the previous versions.
     -}
-    , xinfoStreamNumGroups :: Integer -- ^ The number of consumer groups defined for the stream.
+    , xinfoStreamNumGroups :: Int64 -- ^ The number of consumer groups defined for the stream.
     , xinfoStreamLastEntryId :: ByteString -- ^ The ID of the last entry in the stream.
     }
     deriving (Show, Eq)
@@ -1666,27 +1667,27 @@ data XInfoStreamResponse
 instance RedisResult XInfoStreamResponse where
     decode = decodeRedis5 <> decodeRedis6 <> decodeRedis7
         where
-            decodeRedis5 (RespArray (Just [
-                 RespBlob (Just "length"),            Integer xinfoStreamLength,
-                 RespBlob (Just "radix-tree-keys"),   Integer xinfoStreamRadixTreeKeys,
-                 RespBlob (Just "radix-tree-nodes"),  Integer xinfoStreamRadixTreeNodes,
-                 RespBlob (Just "groups"),            Integer xinfoStreamNumGroups,
-                 RespBlob (Just "last-generated-id"), RespBlob (Just xinfoStreamLastEntryId),
-                 RespBlob (Just "first-entry"),       RespBlob Nothing ,
-                 RespBlob (Just "last-entry"),        RespBlob Nothing ])) = do
+            decodeRedis5 (RespArray [
+                 RespBlob "length",            RespInteger xinfoStreamLength,
+                 RespBlob "radix-tree-keys",   RespInteger xinfoStreamRadixTreeKeys,
+                 RespBlob "radix-tree-nodes",  RespInteger xinfoStreamRadixTreeNodes,
+                 RespBlob "groups",            RespInteger xinfoStreamNumGroups,
+                 RespBlob "last-generated-id", RespBlob xinfoStreamLastEntryId,
+                 RespBlob "first-entry",       RespNull ,
+                 RespBlob "last-entry",        RespNull ]) = do
                     return XInfoStreamEmptyResponse{
                           xinfoMaxDeletedEntryId    = Nothing
                         , xinfoEntriesAdded         = Nothing
                         , xinfoRecordedFirstEntryId = Nothing
                         , ..}
-            decodeRedis5 (RespArray (Just [
-                RespBlob (Just "length"),            Integer xinfoStreamLength,
-                RespBlob (Just "radix-tree-keys"),   Integer xinfoStreamRadixTreeKeys,
-                RespBlob (Just "radix-tree-nodes"),  Integer xinfoStreamRadixTreeNodes,
-                RespBlob (Just "groups"),            Integer xinfoStreamNumGroups,
-                RespBlob (Just "last-generated-id"), RespBlob (Just xinfoStreamLastEntryId),
-                RespBlob (Just "first-entry"),       rawFirstEntry ,
-                RespBlob (Just "last-entry"),        rawLastEntry ])) = do
+            decodeRedis5 (RespArray [
+                RespBlob "length",            RespInteger xinfoStreamLength,
+                RespBlob "radix-tree-keys",   RespInteger xinfoStreamRadixTreeKeys,
+                RespBlob "radix-tree-nodes",  RespInteger xinfoStreamRadixTreeNodes,
+                RespBlob "groups",            RespInteger xinfoStreamNumGroups,
+                RespBlob "last-generated-id", RespBlob xinfoStreamLastEntryId,
+                RespBlob "first-entry",       rawFirstEntry ,
+                RespBlob "last-entry",        rawLastEntry ]) = do
                     xinfoStreamFirstEntry <- decode rawFirstEntry
                     xinfoStreamLastEntry  <- decode rawLastEntry
                     return XInfoStreamResponse{
@@ -1696,27 +1697,27 @@ instance RedisResult XInfoStreamResponse where
                         , ..}
             decodeRedis5 a = Left a
 
-            decodeRedis6 (RespArray (Just [
-                RespBlob (Just "length"),            Integer xinfoStreamLength,
-                RespBlob (Just "radix-tree-keys"),   Integer xinfoStreamRadixTreeKeys,
-                RespBlob (Just "radix-tree-nodes"),  Integer xinfoStreamRadixTreeNodes,
-                RespBlob (Just "last-generated-id"), RespBlob (Just xinfoStreamLastEntryId),
-                RespBlob (Just "groups"),            Integer xinfoStreamNumGroups,
-                RespBlob (Just "first-entry"),       RespBlob Nothing ,
-                RespBlob (Just "last-entry"),        RespBlob Nothing ])) = do
+            decodeRedis6 (RespArray [
+                RespBlob "length",            RespInteger xinfoStreamLength,
+                RespBlob "radix-tree-keys",   RespInteger xinfoStreamRadixTreeKeys,
+                RespBlob "radix-tree-nodes",  RespInteger xinfoStreamRadixTreeNodes,
+                RespBlob "last-generated-id", RespBlob xinfoStreamLastEntryId,
+                RespBlob "groups",            RespInteger xinfoStreamNumGroups,
+                RespBlob "first-entry",       RespNull ,
+                RespBlob "last-entry",        RespNull ]) = do
                     return XInfoStreamEmptyResponse{
                           xinfoMaxDeletedEntryId    = Nothing
                         , xinfoEntriesAdded         = Nothing
                         , xinfoRecordedFirstEntryId = Nothing
                         , ..}
-            decodeRedis6 (RespArray (Just [
-                RespBlob (Just "length"),            Integer xinfoStreamLength,
-                RespBlob (Just "radix-tree-keys"),   Integer xinfoStreamRadixTreeKeys,
-                RespBlob (Just "radix-tree-nodes"),  Integer xinfoStreamRadixTreeNodes,
-                RespBlob (Just "last-generated-id"), RespBlob (Just xinfoStreamLastEntryId),
-                RespBlob (Just "groups"),            Integer xinfoStreamNumGroups,
-                RespBlob (Just "first-entry"),       rawFirstEntry ,
-                RespBlob (Just "last-entry"),        rawLastEntry ])) = do
+            decodeRedis6 (RespArray [
+                RespBlob "length",            RespInteger xinfoStreamLength,
+                RespBlob "radix-tree-keys",   RespInteger xinfoStreamRadixTreeKeys,
+                RespBlob "radix-tree-nodes",  RespInteger xinfoStreamRadixTreeNodes,
+                RespBlob "last-generated-id", RespBlob xinfoStreamLastEntryId,
+                RespBlob "groups",            RespInteger xinfoStreamNumGroups,
+                RespBlob "first-entry",       rawFirstEntry ,
+                RespBlob "last-entry",        rawLastEntry ]) = do
                     xinfoStreamFirstEntry <- decode rawFirstEntry
                     xinfoStreamLastEntry  <- decode rawLastEntry
                     return XInfoStreamResponse{
@@ -1726,34 +1727,34 @@ instance RedisResult XInfoStreamResponse where
                         , ..}
             decodeRedis6 a = Left a
 
-            decodeRedis7 (RespArray (Just [
-                RespBlob (Just "length"),                  Integer xinfoStreamLength,
-                RespBlob (Just "radix-tree-keys"),         Integer xinfoStreamRadixTreeKeys,
-                RespBlob (Just "radix-tree-nodes"),        Integer xinfoStreamRadixTreeNodes,
-                RespBlob (Just "last-generated-id"),       RespBlob (Just xinfoStreamLastEntryId),
-                RespBlob (Just "max-deleted-entry-id"),    RespBlob (Just xinfoMaxDeletedEntryId),
-                RespBlob (Just "entries-added"),           Integer xinfoEntriesAdded,
-                RespBlob (Just "recorded-first-entry-id"), RespBlob (Just xinfoRecordedFirstEntryId),
-                RespBlob (Just "groups"),                  Integer xinfoStreamNumGroups,
-                RespBlob (Just "first-entry"),             RespBlob Nothing ,
-                RespBlob (Just "last-entry"),              RespBlob Nothing ])) = do
+            decodeRedis7 (RespArray [
+                RespBlob "length",                  RespInteger xinfoStreamLength,
+                RespBlob "radix-tree-keys",         RespInteger xinfoStreamRadixTreeKeys,
+                RespBlob "radix-tree-nodes",        RespInteger xinfoStreamRadixTreeNodes,
+                RespBlob "last-generated-id",       RespBlob xinfoStreamLastEntryId,
+                RespBlob "max-deleted-entry-id",    RespBlob xinfoMaxDeletedEntryId,
+                RespBlob "entries-added",           RespInteger xinfoEntriesAdded,
+                RespBlob "recorded-first-entry-id", RespBlob xinfoRecordedFirstEntryId,
+                RespBlob "groups",                  RespInteger xinfoStreamNumGroups,
+                RespBlob "first-entry",             RespNull ,
+                RespBlob "last-entry",              RespNull ]) = do
                     return XInfoStreamEmptyResponse{
                           xinfoMaxDeletedEntryId    = Just xinfoMaxDeletedEntryId
                         , xinfoEntriesAdded         = Just xinfoEntriesAdded
                         , xinfoRecordedFirstEntryId = Just xinfoRecordedFirstEntryId
                         , ..}
 
-            decodeRedis7 (RespArray (Just [
-                RespBlob (Just "length"),                  Integer xinfoStreamLength,
-                RespBlob (Just "radix-tree-keys"),         Integer xinfoStreamRadixTreeKeys,
-                RespBlob (Just "radix-tree-nodes"),        Integer xinfoStreamRadixTreeNodes,
-                RespBlob (Just "last-generated-id"),       RespBlob (Just xinfoStreamLastEntryId),
-                RespBlob (Just "max-deleted-entry-id"),    RespBlob (Just xinfoMaxDeletedEntryId),
-                RespBlob (Just "entries-added"),           Integer xinfoEntriesAdded,
-                RespBlob (Just "recorded-first-entry-id"), RespBlob (Just xinfoRecordedFirstEntryId),
-                RespBlob (Just "groups"),                  Integer xinfoStreamNumGroups,
-                RespBlob (Just "first-entry"),          rawFirstEntry ,
-                RespBlob (Just "last-entry"),           rawLastEntry ])) = do
+            decodeRedis7 (RespArray [
+                RespBlob "length",                  RespInteger xinfoStreamLength,
+                RespBlob "radix-tree-keys",         RespInteger xinfoStreamRadixTreeKeys,
+                RespBlob "radix-tree-nodes",        RespInteger xinfoStreamRadixTreeNodes,
+                RespBlob "last-generated-id",       RespBlob xinfoStreamLastEntryId,
+                RespBlob "max-deleted-entry-id",    RespBlob xinfoMaxDeletedEntryId,
+                RespBlob "entries-added",           RespInteger xinfoEntriesAdded,
+                RespBlob "recorded-first-entry-id", RespBlob xinfoRecordedFirstEntryId,
+                RespBlob "groups",                  RespInteger xinfoStreamNumGroups,
+                RespBlob "first-entry",          rawFirstEntry ,
+                RespBlob "last-entry",           rawLastEntry ]) = do
                     xinfoStreamFirstEntry <- decode rawFirstEntry
                     xinfoStreamLastEntry  <- decode rawLastEntry
                     return XInfoStreamResponse{
@@ -1871,7 +1872,7 @@ data ClusterNodesResponseSlotSpec
 
 
 instance RedisResult ClusterNodesResponse where
-    decode r@(RespBlob (Just bulkData)) = maybe (Left r) Right $ do
+    decode r@(RespBlob bulkData) = maybe (Left r) Right $ do
         infos <- mapM parseNodeInfo $ Char8.lines bulkData
         return $ ClusterNodesResponse infos where
             parseNodeInfo :: ByteString -> Maybe ClusterNodesResponseEntry
@@ -1943,24 +1944,24 @@ data ClusterSlotsResponseEntry = ClusterSlotsResponseEntry
     } deriving (Show)
 
 instance RedisResult ClusterSlotsResponse where
-    decode (RespArray (Just bulkData)) = do
+    decode (RespArray bulkData) = do
         clusterSlotsResponseEntries <- mapM decode bulkData
         return ClusterSlotsResponse{..}
     decode a = Left a
 
 instance RedisResult ClusterSlotsResponseEntry where
-    decode (RespArray (Just
-        ((Integer startSlot):(Integer endSlot):masterData:replicas))) = do
+    decode (RespArray
+        ((RespInteger startSlot):(RespInteger endSlot):masterData:replicas)) = do
             clusterSlotsResponseEntryMaster <- decode masterData
             clusterSlotsResponseEntryReplicas <- mapM decode replicas
-            let clusterSlotsResponseEntryStartSlot = fromInteger startSlot
-            let clusterSlotsResponseEntryEndSlot = fromInteger endSlot
+            let clusterSlotsResponseEntryStartSlot = fromIntegral startSlot
+            let clusterSlotsResponseEntryEndSlot = fromIntegral endSlot
             return ClusterSlotsResponseEntry{..}
     decode a = Left a
 
 instance RedisResult ClusterSlotsNode where
-    decode (RespArray (Just ((RespBlob (Just clusterSlotsNodeIP)):(Integer port):(RespBlob (Just clusterSlotsNodeID)):_))) = Right ClusterSlotsNode{..}
-        where clusterSlotsNodePort = fromInteger port
+    decode (RespArray ((RespBlob clusterSlotsNodeIP):(RespInteger port):(RespBlob clusterSlotsNodeID):_)) = Right ClusterSlotsNode{..}
+        where clusterSlotsNodePort = fromIntegral port
     decode a = Left a
 
 

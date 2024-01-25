@@ -41,10 +41,10 @@ testCase name r conn = Test.testCase name $ do
         when (deltaT > limit) $
             putStrLn $ name ++ ": " ++ show deltaT
 
-(>>=?) :: (Eq a, Show a) => Redis (Either Reply a) -> a -> Redis ()
+(>>=?) :: (Eq a, Show a, Show b) => Redis (Either b a) -> a -> Redis ()
 redis >>=? expected = redis >>@? (expected HUnit.@=?)
 
-(>>@?) :: (Eq a, Show a) => Redis (Either Reply a) -> (a -> HUnit.Assertion) -> Redis ()
+(>>@?) :: (Eq a, Show a, Show b) => Redis (Either b a) -> (a -> HUnit.Assertion) -> Redis ()
 redis >>@? predicate = do
     a <- redis
     liftIO $ case a of
@@ -95,7 +95,7 @@ testForceErrorReply = testCase "force error reply" $ do
     -- key is not a hash -> wrong kind of value
     reply <- hkeys "key"
     assert $ case reply of
-        Left (Error _) -> True
+        Left (RespStringError _) -> True
         _              -> False
 
 testPipelining :: Test
@@ -547,7 +547,7 @@ testScripting conn = testCase "scripting" go conn
             asyncScripting <- liftIO $ Async.async $ runRedis conn $ do
                 -- we must pattern match to block the thread
                 (eval "while true do end" [] []
-                    :: Redis (Either Reply Integer)) >>= \case
+                    :: Redis (Either RespExpr Integer)) >>= \case
                     Left _ -> return ()
                     _ -> error "impossible"
                 liftIO (putMVar evalFinished ())
@@ -578,7 +578,7 @@ testConnectAuthUnexpected = testCase "connect/auth/unexpected" $ do
 
     where connInfo = defaultConnectInfo { connectAuth = Just "pass" }
           err = Left $ ConnectAuthError $
-                  Error "ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?"
+                  RespStringError "ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?"
 
 
 testConnectAuthAcl :: Test
@@ -594,7 +594,7 @@ testConnectAuthAcl = testCase "connect/auth/acl" $ do
       HUnit.assertEqual "" err res
    where
      err = Left $ ConnectAuthError $
-             Error "WRONGPASS invalid username-password pair or user is disabled."
+             RespStringError "WRONGPASS invalid username-password pair or user is disabled."
 
 testConnectDb :: Test
 testConnectDb = testCase "connect/db" $ do

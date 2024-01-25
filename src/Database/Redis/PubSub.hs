@@ -40,7 +40,7 @@ import qualified Data.HashMap.Strict as HM
 import qualified Database.Redis.Core as Core
 import qualified Database.Redis.Connection as Connection
 import qualified Database.Redis.ProtocolPipelining as PP
-import Database.Redis.Protocol (Reply(..), renderRequest)
+import Database.Redis.Protocol (Reply, RespReply(..), RespExpr(..), renderRequest)
 import Database.Redis.Types
 
 -- |While in PubSub mode, we keep track of the number of current subscriptions
@@ -607,19 +607,23 @@ pubSubForever (Connection.ClusteredConnection _ _) _ _ = undefined
 -- Helpers
 --
 decodeMsg :: Reply -> PubSubReply
-decodeMsg r@(RespArray (Just (r0:r1:r2:rs))) = either (errMsg r) id $ do
-    kind <- decode r0
+decodeMsg r@(RespPush kind (r1:r2:rs)) = either (errMsg r) id $ do
     case kind :: ByteString of
         "message"      -> Msg <$> decodeMessage
         "pmessage"     -> Msg <$> decodePMessage
-        "subscribe"    -> return Subscribed
-        "psubscribe"   -> return Subscribed
-        "unsubscribe"  -> Unsubscribed <$> decodeCnt
-        "punsubscribe" -> Unsubscribed <$> decodeCnt
         _              -> errMsg r
   where
     decodeMessage  = Message  <$> decode r1 <*> decode r2
     decodePMessage = PMessage <$> decode r1 <*> decode r2 <*> decode (head rs)
+
+decodeMsg r@(RespExpr (RespArray (r0:_:r2:_))) = either (errMsg r) id $ do
+    case decode r0 :: Either RespExpr ByteString of
+        Right "subscribe"    -> return Subscribed
+        Right "psubscribe"   -> return Subscribed
+        Right "unsubscribe"  -> Unsubscribed <$> decodeCnt
+        Right "punsubscribe" -> Unsubscribed <$> decodeCnt
+        _              -> errMsg r
+  where
     decodeCnt      = fromInteger <$> decode r2
 
 decodeMsg r = errMsg r

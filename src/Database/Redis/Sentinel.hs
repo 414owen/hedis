@@ -98,7 +98,7 @@ runRedis (SentinelConnection connMVar) action = do
   reply <- (Redis.runRedis baseConn action >>= evaluate)
     `catchRedisRethrow` (\_ -> setCheckSentinel preToken)
   case reply of
-    Left (Error e) | "READONLY " `BS.isPrefixOf` e ->
+    Left (RespExpr (RespStringError e)) | "READONLY " `BS.isPrefixOf` e ->
         -- This means our connection has turned into a slave
         setCheckSentinel preToken
     _ -> return ()

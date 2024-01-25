@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- |A module for automatic, optimal protocol pipelining.
 --
@@ -31,14 +32,15 @@ import           System.IO.Unsafe
 
 import           Database.Redis.Protocol
 import qualified Database.Redis.ConnectionContext as CC
+import Data.Maybe (mapMaybe)
 
 data Connection = Conn
   { connCtx        :: CC.ConnectionContext -- ^ Connection socket-handle.
   , connReplies    :: IORef [Reply] -- ^ Reply thunks for unsent requests.
   , connExprs      :: IORef [RespExpr] -- ^ Same list as 'connReplies', but with push messages filtered out
   , connPending    :: IORef [Reply]
-    -- ^ Reply thunks for requests "in the pipeline". Refers to the same list as
-    --   'connReplies', but can have an offset.
+    -- ^ Reply thunks for requests "in the pipeline", meaning not yet forced.
+    -- Refers to the same list as 'connReplies', but can have an offset.
   , connPendingCnt :: IORef Int
     -- ^ Number of pending replies and thus the difference length between
     --   'connReplies' and 'connPending'.
@@ -67,7 +69,12 @@ beginReceiving :: Connection -> IO ()
 beginReceiving conn = do
   rs <- connGetReplies conn
   writeIORef (connReplies conn) rs
+  writeIORef (connExprs conn) $ mapMaybe toExpr rs
   writeIORef (connPending conn) rs
+
+toExpr :: Reply -> Maybe RespExpr
+toExpr (RespExpr e) = Just e
+toExpr (RespPush _ _) = Nothing
 
 disconnect :: Connection -> IO ()
 disconnect Conn{..} = CC.disconnect connCtx
@@ -126,9 +133,10 @@ request conn req = send conn req >> recvExpr conn
 connGetReplies :: Connection -> IO [Reply]
 connGetReplies conn@Conn{..} = go S.empty (RespExpr $ RespString "previous of first")
   where
+    go :: S.ByteString -> Reply -> IO [Reply]
     go rest previous = do
       -- lazy pattern match to actually delay the receiving
-      ~(r, rest') <- unsafeInterleaveIO $ do
+      ~(r :: Reply, rest' :: S.ByteString) <- unsafeInterleaveIO $ do
         -- Force previous reply for correct order.
         previous `seq` return ()
         scanResult <- Scanner.scanWith readMore reply rest

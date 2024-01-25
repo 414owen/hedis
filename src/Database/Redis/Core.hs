@@ -89,12 +89,24 @@ setLastReply r = do
   ref <- asks envLastReply
   lift (writeIORef ref r)
 
-recv :: (MonadRedis m) => m RespExpr
+recv :: (MonadRedis m) => m Reply
 recv = liftRedis $ Redis $ do
+  conn <- asks envConn
+  r <- liftIO (PP.recv conn)
+  case r of
+    RespExpr r' -> setLastReply r'
+    _ -> return ()
+  return r
+
+{-
+-- TODO do we need this?
+recvExpr :: (MonadRedis m) => m RespExpr
+recvExpr = liftRedis $ Redis $ do
   conn <- asks envConn
   r <- liftIO (PP.recvExpr conn)
   setLastReply r
   return r
+-}
 
 send :: (MonadRedis m) => [B.ByteString] -> m ()
 send req = liftRedis $ Redis $ do
