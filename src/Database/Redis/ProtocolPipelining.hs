@@ -22,6 +22,7 @@ module Database.Redis.ProtocolPipelining (
 ) where
 
 import           Prelude
+import qualified Control.Concurrent.STM as STM
 import           Control.Monad
 import qualified Scanner
 import qualified Data.ByteString as S
@@ -32,12 +33,10 @@ import           System.IO.Unsafe
 
 import           Database.Redis.Protocol
 import qualified Database.Redis.ConnectionContext as CC
-import Data.Maybe (mapMaybe)
 
 data Connection = Conn
   { connCtx        :: CC.ConnectionContext -- ^ Connection socket-handle.
-  , connReplies    :: IORef [Reply] -- ^ Reply thunks for unsent requests.
-  , connExprs      :: IORef [RespExpr] -- ^ Same list as 'connReplies', but with push messages filtered out
+  , connReplies    :: STM.TVar [Reply] -- ^ Reply thunks for unsent requests.
   , connPending    :: IORef [Reply]
     -- ^ Reply thunks for requests "in the pipeline", meaning not yet forced.
     -- Refers to the same list as 'connReplies', but can have an offset.
@@ -49,13 +48,12 @@ data Connection = Conn
 
 
 fromCtx :: CC.ConnectionContext -> IO Connection
-fromCtx ctx = Conn ctx <$> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef 0
+fromCtx ctx = Conn ctx <$> STM.newTVarIO [] <*> newIORef [] <*> newIORef 0
 
 connect :: NS.HostName -> CC.PortID -> Maybe Int -> IO Connection
 connect hostName portId timeoutOpt = do
     connCtx <- CC.connect hostName portId timeoutOpt
-    connReplies <- newIORef []
-    connExprs <- newIORef []
+    connReplies <- STM.newTVarIO []
     connPending <- newIORef []
     connPendingCnt <- newIORef 0
     return Conn{..}
@@ -68,13 +66,8 @@ enableTLS tlsParams conn@Conn{..} = do
 beginReceiving :: Connection -> IO ()
 beginReceiving conn = do
   rs <- connGetReplies conn
-  writeIORef (connReplies conn) rs
-  writeIORef (connExprs conn) $ mapMaybe toExpr rs
+  STM.atomically $ STM.writeTVar (connReplies conn) rs
   writeIORef (connPending conn) rs
-
-toExpr :: Reply -> Maybe RespExpr
-toExpr (RespExpr e) = Just e
-toExpr (RespPush _ _) = Nothing
 
 disconnect :: Connection -> IO ()
 disconnect Conn{..} = CC.disconnect connCtx
@@ -97,16 +90,21 @@ send Conn{..} s = do
 
 -- |Take a reply-thunk from the list of future replies.
 recv :: Connection -> IO Reply
-recv Conn{..} = do
-  (r:rs) <- readIORef connReplies
-  writeIORef connReplies rs
-  return r
+recv Conn{..} = STM.atomically $ do
+  msgs <- STM.readTVar connReplies
+  case msgs of
+    r:rs -> do
+      STM.writeTVar connReplies rs
+      return r
 
 recvExpr :: Connection -> IO RespExpr
-recvExpr Conn{..} = do
-  (r:rs) <- readIORef connExprs
-  writeIORef connExprs rs
-  return r
+recvExpr Conn{..} = STM.atomically $ do
+  msgs <- STM.readTVar connReplies
+  case msgs of
+    RespPush _ _ : _ -> STM.retry -- Wait for the pub/sub listener to clear the queue
+    RespExpr e : rs -> do
+      STM.writeTVar connReplies rs
+      return e
 
 -- | Flush the socket.  Normally, the socket is flushed in 'recv' (actually 'conGetReplies'), but
 -- for the multithreaded pub/sub code, the sending thread needs to explicitly flush the subscription

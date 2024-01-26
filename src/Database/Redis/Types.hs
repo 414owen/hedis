@@ -19,6 +19,7 @@ import qualified Data.ByteString.Lex.Integral as I (readSigned, readDecimal)
 import GHC.Generics
 
 import Database.Redis.Protocol
+import Data.Bitraversable (Bitraversable(..))
 
 
 ------------------------------------------------------------------------------
@@ -126,6 +127,7 @@ instance (RedisResult a, RedisResult b) => RedisResult (a,b) where
 instance (RedisResult k, RedisResult v) => RedisResult [(k,v)] where
     decode r = case r of
                 (RespArray rs) -> pairs rs
+                (RespMap kvs) -> traverse (bitraverse decode decode) kvs
                 _              -> Left r
       where
         pairs []         = Right []

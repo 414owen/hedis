@@ -13,6 +13,7 @@ defaultAuthOpts,
 -- *** Other commands
 echo,
 ping,
+hello,
 quit,
 select,
 

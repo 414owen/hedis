@@ -39,6 +39,7 @@ import qualified Database.Redis.ConnectionContext as CC
 --import qualified Database.Redis.Cluster.Pipeline as ClusterPipeline
 import Database.Redis.Commands
     ( ping
+    , hello
     , select
     , authOpts
     , defaultAuthOpts
@@ -160,25 +161,27 @@ createConnection ConnInfo{..} = do
     return conn'
 
 -- |Constructs a 'Connection' pool to a Redis server designated by the
---  given 'ConnectInfo'. The first connection is not actually established
---  until the first call to the server.
+--  given 'ConnectInfo'.
 connect :: ConnectInfo -> IO Connection
-connect cInfo@ConnInfo{..} = NonClusteredConnection <$>
+connect cInfo@ConnInfo{..} = do
+    c <- NonClusteredConnection <$>
 #if MIN_VERSION_resource_pool(0,3,0)
-    newPool (defaultPoolConfig (createConnection cInfo) PP.disconnect (realToFrac connectMaxIdleTime) connectMaxConnections)
+        newPool (defaultPoolConfig (createConnection cInfo) PP.disconnect (realToFrac connectMaxIdleTime) connectMaxConnections)
 #else
-    createPool (createConnection cInfo) PP.disconnect 1 connectMaxIdleTime connectMaxConnections
+        createPool (createConnection cInfo) PP.disconnect 1 connectMaxIdleTime connectMaxConnections
 #endif
+    runRedis c hello
+    pure c
 
 -- |Constructs a 'Connection' pool to a Redis server designated by the
 --  given 'ConnectInfo', then tests if the server is actually there.
 --  Throws an exception if the connection to the Redis server can't be
 --  established.
+--
+{-# DEPRECATED #-}
 checkedConnect :: ConnectInfo -> IO Connection
 checkedConnect connInfo = do
-    conn <- connect connInfo
-    runRedis conn $ void ping
-    return conn
+    connect connInfo
 
 -- |Destroy all idle resources in the pool.
 disconnect :: Connection -> IO ()
@@ -227,7 +230,7 @@ connectCluster bootstrapConnInfo = do
             shardMap <- shardMapFromClusterSlotsResponse slots
             newMVar shardMap
     commandInfos <- runRedisInternal conn command
-    case commandInfos of
+    res <- case commandInfos of
         Left e -> throwIO $ ClusterConnectError e
         Right infos -> do
 #if MIN_VERSION_resource_pool(0,3,0)
@@ -236,6 +239,9 @@ connectCluster bootstrapConnInfo = do
             pool <- createPool (Cluster.connect infos shardMapVar Nothing) Cluster.disconnect 1 (connectMaxIdleTime bootstrapConnInfo) (connectMaxConnections bootstrapConnInfo)
 #endif
             return $ ClusteredConnection shardMapVar pool
+    helloRes <- runRedis res hello
+    helloRes `seq` pure res
+
 
 shardMapFromClusterSlotsResponse :: ClusterSlotsResponse -> IO ShardMap
 shardMapFromClusterSlotsResponse ClusterSlotsResponse{..} = ShardMap <$> foldr mkShardMap (pure IntMap.empty)  clusterSlotsResponseEntries where

@@ -607,24 +607,26 @@ pubSubForever (Connection.ClusteredConnection _ _) _ _ = undefined
 -- Helpers
 --
 decodeMsg :: Reply -> PubSubReply
-decodeMsg r@(RespPush kind (r1:r2:rs)) = either (errMsg r) id $ do
-    case kind :: ByteString of
-        "message"      -> Msg <$> decodeMessage
-        "pmessage"     -> Msg <$> decodePMessage
-        _              -> errMsg r
+decodeMsg r = case r of
+  (RespPush r0 rs) -> go r0 rs
+  (RespExpr (RespArray (r0 : rs))) -> case decode r0 of
+    Right a -> go a rs
+    _ -> errMsg r
   where
-    decodeMessage  = Message  <$> decode r1 <*> decode r2
-    decodePMessage = PMessage <$> decode r1 <*> decode r2 <*> decode (head rs)
+    go :: ByteString -> [RespExpr] -> PubSubReply 
+    go r0 (r1 : r2 : rs) = either (errMsg r) id $ case r0 :: ByteString of
+      "message"      -> Msg <$> decodeMessage
+      "pmessage"     -> Msg <$> decodePMessage
+      "subscribe"    -> return Subscribed
+      "psubscribe"   -> return Subscribed
+      "unsubscribe"  -> Unsubscribed <$> decodeCnt
+      "punsubscribe" -> Unsubscribed <$> decodeCnt
+      _              -> errMsg r
 
-decodeMsg r@(RespExpr (RespArray (r0:_:r2:_))) = either (errMsg r) id $ do
-    case decode r0 :: Either RespExpr ByteString of
-        Right "subscribe"    -> return Subscribed
-        Right "psubscribe"   -> return Subscribed
-        Right "unsubscribe"  -> Unsubscribed <$> decodeCnt
-        Right "punsubscribe" -> Unsubscribed <$> decodeCnt
-        _              -> errMsg r
-  where
-    decodeCnt      = fromInteger <$> decode r2
+      where
+        decodeMessage  = Message  <$> decode r1 <*> decode r2
+        decodePMessage = PMessage <$> decode r1 <*> decode r2 <*> decode (head rs)
+        decodeCnt      = fromInteger <$> decode r2
 
 decodeMsg r = errMsg r
 

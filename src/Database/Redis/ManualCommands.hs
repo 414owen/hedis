@@ -1848,6 +1848,11 @@ ping
     => m (f Status)
 ping  = sendRequest (["PING"] )
 
+hello
+    :: (RedisCtx m f)
+    => m (f [(ByteString, ByteString)])
+hello = sendRequest ["HELLO", "3"]
+
 data ClusterNodesResponse = ClusterNodesResponse
     { clusterNodesResponseEntries :: [ClusterNodesResponseEntry]
     } deriving (Show, Eq)
