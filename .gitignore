@@ -11,3 +11,4 @@ appendonly.aof
 TAGS
 stack*.yaml.lock
 .vscode
+hie.yaml
