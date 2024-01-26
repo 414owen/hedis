@@ -62,8 +62,8 @@ import qualified Database.Redis as Redis
 
 -- | Interact with a Redis datastore.  See 'Database.Redis.runRedis' for details.
 runRedis :: SentinelConnection
-         -> Redis (Either Reply a)
-         -> IO (Either Reply a)
+         -> Redis (Either RespMessage a)
+         -> IO (Either RespMessage a)
 runRedis (SentinelConnection connMVar) action = do
   (baseConn, preToken) <- modifyMVar connMVar $ \oldConnection@SentinelConnection'
           { rcCheckFailover
@@ -98,7 +98,7 @@ runRedis (SentinelConnection connMVar) action = do
   reply <- (Redis.runRedis baseConn action >>= evaluate)
     `catchRedisRethrow` (\_ -> setCheckSentinel preToken)
   case reply of
-    Left (RespExpr (RespStringError e)) | "READONLY " `BS.isPrefixOf` e ->
+    Left (RespReply (RespStringError e)) | "READONLY " `BS.isPrefixOf` e ->
         -- This means our connection has turned into a slave
         setCheckSentinel preToken
     _ -> return ()

@@ -18,7 +18,7 @@
 --
 module Database.Redis.ProtocolPipelining (
   Connection,
-  connect, enableTLS, beginReceiving, disconnect, request, send, recv, flush, fromCtx, recvExpr
+  connect, enableTLS, beginReceiving, disconnect, request, send, recv, flush, fromCtx, recvReply
 ) where
 
 import           Prelude
@@ -33,11 +33,12 @@ import           System.IO.Unsafe
 
 import           Database.Redis.Protocol
 import qualified Database.Redis.ConnectionContext as CC
+import Data.RESP (parseMessage)
 
 data Connection = Conn
   { connCtx        :: CC.ConnectionContext -- ^ Connection socket-handle.
-  , connReplies    :: STM.TVar [Reply] -- ^ Reply thunks for unsent requests.
-  , connPending    :: IORef [Reply]
+  , connReplies    :: STM.TVar [RespMessage] -- ^ Reply thunks for unsent requests.
+  , connPending    :: IORef [RespMessage]
     -- ^ Reply thunks for requests "in the pipeline", meaning not yet forced.
     -- Refers to the same list as 'connReplies', but can have an offset.
   , connPendingCnt :: IORef Int
@@ -89,7 +90,7 @@ send Conn{..} s = do
     r `seq` return ()
 
 -- |Take a reply-thunk from the list of future replies.
-recv :: Connection -> IO Reply
+recv :: Connection -> IO RespMessage
 recv Conn{..} = STM.atomically $ do
   msgs <- STM.readTVar connReplies
   case msgs of
@@ -97,12 +98,12 @@ recv Conn{..} = STM.atomically $ do
       STM.writeTVar connReplies rs
       return r
 
-recvExpr :: Connection -> IO RespExpr
-recvExpr Conn{..} = STM.atomically $ do
+recvReply :: Connection -> IO RespExpr
+recvReply Conn{..} = STM.atomically $ do
   msgs <- STM.readTVar connReplies
   case msgs of
     RespPush _ _ : _ -> STM.retry -- Wait for the pub/sub listener to clear the queue
-    RespExpr e : rs -> do
+    RespReply e : rs -> do
       STM.writeTVar connReplies rs
       return e
 
@@ -114,7 +115,7 @@ flush Conn{..} = CC.flush connCtx
 
 -- |Send a request and receive the corresponding reply
 request :: Connection -> S.ByteString -> IO RespExpr
-request conn req = send conn req >> recvExpr conn
+request conn req = send conn req >> recvReply conn
 
 -- |A list of all future 'Reply's of the 'Connection'.
 --
@@ -128,16 +129,16 @@ request conn req = send conn req >> recvExpr conn
 --  thread-safe. 'Handle' as implemented by GHC is also threadsafe, it is safe
 --  to call 'hFlush' here. The list constructor '(:)' must be called from
 --  /within/ unsafeInterleaveIO, to keep the replies in correct order.
-connGetReplies :: Connection -> IO [Reply]
-connGetReplies conn@Conn{..} = go S.empty (RespExpr $ RespString "previous of first")
+connGetReplies :: Connection -> IO [RespMessage]
+connGetReplies conn@Conn{..} = go S.empty (RespReply $ RespString "previous of first")
   where
-    go :: S.ByteString -> Reply -> IO [Reply]
+    go :: S.ByteString -> RespMessage -> IO [RespMessage]
     go rest previous = do
       -- lazy pattern match to actually delay the receiving
-      ~(r :: Reply, rest' :: S.ByteString) <- unsafeInterleaveIO $ do
+      ~(r :: RespMessage, rest' :: S.ByteString) <- unsafeInterleaveIO $ do
         -- Force previous reply for correct order.
         previous `seq` return ()
-        scanResult <- Scanner.scanWith readMore reply rest
+        scanResult <- Scanner.scanWith readMore parseMessage rest
         case scanResult of
           Scanner.Fail{}       -> CC.errConnClosed
           Scanner.More{}    -> error "Hedis: parseWith returned Partial"

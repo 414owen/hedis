@@ -178,7 +178,7 @@ module Database.Redis (
 
     -- * Low-Level Command API
     sendRequest,
-    Reply, RespExpr(..), RespReply(..), Status(..), RedisArg(..), RedisResult(..), ConnectionLostException(..),
+    RespExpr(..), RespMessage(..), Status(..), RedisArg(..), RedisResult(..), ConnectionLostException(..),
     ConnectTimeout(..),
 
     -- |[Solution to Exercise]

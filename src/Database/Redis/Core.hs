@@ -5,7 +5,7 @@
 module Database.Redis.Core (
     Redis(), unRedis, reRedis,
     RedisCtx(..), MonadRedis(..),
-    send, recv, sendRequest,
+    send, recvReply, sendRequest,
     runRedisInternal,
     runRedisClusteredInternal,
     RedisEnv(..),
@@ -65,7 +65,7 @@ unRedis (Redis r) = r
 
 -- |Reconstruct Redis constructor.
 reRedis :: ReaderT RedisEnv IO a -> Redis a
-reRedis r = Redis r
+reRedis = Redis
 
 -- |Internal version of 'runRedis' that does not depend on the 'Connection'
 --  abstraction. Used to run the AUTH command when connecting.
@@ -89,12 +89,12 @@ setLastReply r = do
   ref <- asks envLastReply
   lift (writeIORef ref r)
 
-recv :: (MonadRedis m) => m Reply
-recv = liftRedis $ Redis $ do
+recvReply :: (MonadRedis m) => m RespMessage
+recvReply = liftRedis $ Redis $ do
   conn <- asks envConn
   r <- liftIO (PP.recv conn)
   case r of
-    RespExpr r' -> setLastReply r'
+    RespReply r' -> setLastReply r'
     _ -> return ()
   return r
 

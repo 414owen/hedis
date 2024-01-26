@@ -32,14 +32,13 @@ import qualified Data.HashMap.Strict as HM
 
 import qualified Database.Redis.ProtocolPipelining as PP
 import Database.Redis.Core(Redis, runRedisInternal, runRedisClusteredInternal)
-import Database.Redis.Protocol(Reply, RespExpr(..))
+import Database.Redis.Protocol(RespExpr(..))
 import Database.Redis.Cluster(ShardMap(..), Node, Shard(..))
 import qualified Database.Redis.Cluster as Cluster
 import qualified Database.Redis.ConnectionContext as CC
 --import qualified Database.Redis.Cluster.Pipeline as ClusterPipeline
 import Database.Redis.Commands
-    ( ping
-    , hello
+    ( hello
     , select
     , authOpts
     , defaultAuthOpts

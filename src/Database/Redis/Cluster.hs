@@ -36,7 +36,7 @@ import System.IO.Unsafe(unsafeInterleaveIO)
 
 -- TODO(414owen): Check, are these (still) single-line errors?
 -- Maybe we need a way to get single or multi-line errors?
-import Database.Redis.Protocol(Reply, RespExpr(RespStringError), renderRequest, parseExpression)
+import Database.Redis.Protocol(RespExpr(RespStringError), renderRequest, parseExpression)
 import qualified Database.Redis.Cluster.Command as CMD
 
 -- This module implements a clustered connection whilst maintaining

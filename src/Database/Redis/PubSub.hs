@@ -40,7 +40,7 @@ import qualified Data.HashMap.Strict as HM
 import qualified Database.Redis.Core as Core
 import qualified Database.Redis.Connection as Connection
 import qualified Database.Redis.ProtocolPipelining as PP
-import Database.Redis.Protocol (Reply, RespReply(..), RespExpr(..), renderRequest)
+import Database.Redis.Protocol (RespMessage(..), RespExpr(..), renderRequest)
 import Database.Redis.Types
 
 -- |While in PubSub mode, we keep track of the number of current subscriptions
@@ -246,7 +246,7 @@ pubSub initial callback
 
     recv :: StateT PubSubState Core.Redis ()
     recv = do
-        reply <- lift Core.recv
+        reply <- lift Core.recvReply
         case decodeMsg reply of
             Msg msg        -> liftIO (callback msg) >>= send
             Subscribed     -> modifyPending (subtract 1) >> recv
@@ -606,10 +606,10 @@ pubSubForever (Connection.ClusteredConnection _ _) _ _ = undefined
 ------------------------------------------------------------------------------
 -- Helpers
 --
-decodeMsg :: Reply -> PubSubReply
+decodeMsg :: RespMessage -> PubSubReply
 decodeMsg r = case r of
   (RespPush r0 rs) -> go r0 rs
-  (RespExpr (RespArray (r0 : rs))) -> case decode r0 of
+  (RespReply (RespArray (r0 : rs))) -> case decode r0 of
     Right a -> go a rs
     _ -> errMsg r
   where
@@ -630,7 +630,7 @@ decodeMsg r = case r of
 
 decodeMsg r = errMsg r
 
-errMsg :: Reply -> a
+errMsg :: RespMessage -> a
 errMsg r = error $ "Hedis: expected pub/sub-message but got: " ++ show r
 
 

@@ -1,10 +1,13 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+{- |
+Most of the protocol is now implemented in the `resp` library.
+-}
+
 module Database.Redis.Protocol
-  ( Reply, RespReply(..), RespExpr(..)
-  , reply, renderRequest, parseExpression
+  ( RespMessage(..), RespExpr(..)
+  , renderRequest, parseExpression
   ) where
 
 import Prelude hiding (error, take)
@@ -12,18 +15,12 @@ import Prelude hiding (error, take)
 import Control.Applicative
 #endif
 import Control.DeepSeq
-import Scanner (Scanner)
 import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import Data.RESP
 
-type Reply = RespReply
-
-instance NFData RespReply
+instance NFData RespMessage
 instance NFData RespExpr
-
-reply :: Scanner Reply
-reply = parseReply
 
 ------------------------------------------------------------------------------
 -- Request
