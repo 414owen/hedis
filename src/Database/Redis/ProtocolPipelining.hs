@@ -16,14 +16,24 @@
 --      as possible, i.e. as long as a request's response is not used before any
 --      subsequent requests.
 --
+--  Note that this module is incompatible with push messages, as that would
+--  listening for, and inspecting, messages requires flushing the pipeline.
+--
 module Database.Redis.ProtocolPipelining (
   Connection,
-  connect, enableTLS, beginReceiving, disconnect, request, send, recv, flush, fromCtx, recvReply
+  connect,
+  enableTLS,
+  beginReceiving,
+  disconnect,
+  request,
+  ppSend,
+  ppRecv,
+  fromCtx
 ) where
 
 import           Prelude
-import qualified Control.Concurrent.STM as STM
 import           Control.Monad
+import           Data.RESP (parseMessage)
 import qualified Scanner
 import qualified Data.ByteString as S
 import           Data.IORef
@@ -31,14 +41,14 @@ import qualified Network.Socket as NS
 import qualified Network.TLS as TLS
 import           System.IO.Unsafe
 
-import           Database.Redis.Protocol
+import           Database.Redis.Connection.Class (RedisConnection(..))
 import qualified Database.Redis.ConnectionContext as CC
-import Data.RESP (parseMessage)
+import           Database.Redis.Protocol
 
 data Connection = Conn
   { connCtx        :: CC.ConnectionContext -- ^ Connection socket-handle.
-  , connReplies    :: STM.TVar [RespMessage] -- ^ Reply thunks for unsent requests.
-  , connPending    :: IORef [RespMessage]
+  , connReplies    :: IORef [RespExpr] -- ^ Reply thunks for unsent requests.
+  , connPending    :: IORef [RespExpr]
     -- ^ Reply thunks for requests "in the pipeline", meaning not yet forced.
     -- Refers to the same list as 'connReplies', but can have an offset.
   , connPendingCnt :: IORef Int
@@ -47,14 +57,20 @@ data Connection = Conn
     --   length connPending  - pendingCount = length connReplies
   }
 
+instance HasReqReplyConnection Connection where
+  getReqReplyConn = id
+
+instance RedisConnection Connection RespExpr where
+  recvRedis = ppRecv
+  sendRedis = ppSend
 
 fromCtx :: CC.ConnectionContext -> IO Connection
-fromCtx ctx = Conn ctx <$> STM.newTVarIO [] <*> newIORef [] <*> newIORef 0
+fromCtx ctx = Conn ctx <$> newIORef [] <*> newIORef [] <*> newIORef 0
 
 connect :: NS.HostName -> CC.PortID -> Maybe Int -> IO Connection
 connect hostName portId timeoutOpt = do
     connCtx <- CC.connect hostName portId timeoutOpt
-    connReplies <- STM.newTVarIO []
+    connReplies <- newIORef []
     connPending <- newIORef []
     connPendingCnt <- newIORef 0
     return Conn{..}
@@ -67,7 +83,7 @@ enableTLS tlsParams conn@Conn{..} = do
 beginReceiving :: Connection -> IO ()
 beginReceiving conn = do
   rs <- connGetReplies conn
-  STM.atomically $ STM.writeTVar (connReplies conn) rs
+  writeIORef (connReplies conn) rs
   writeIORef (connPending conn) rs
 
 disconnect :: Connection -> IO ()
@@ -75,8 +91,8 @@ disconnect Conn{..} = CC.disconnect connCtx
 
 -- |Write the request to the socket output buffer, without actually sending.
 --  The 'Handle' is 'hFlush'ed when reading replies from the 'connCtx'.
-send :: Connection -> S.ByteString -> IO ()
-send Conn{..} s = do
+ppSend :: Connection -> S.ByteString -> IO ()
+ppSend Conn{..} s = do
   CC.send connCtx s
 
   -- Signal that we expect one more reply from Redis.
@@ -90,32 +106,11 @@ send Conn{..} s = do
     r `seq` return ()
 
 -- |Take a reply-thunk from the list of future replies.
-recv :: Connection -> IO RespMessage
-recv Conn{..} = STM.atomically $ do
-  msgs <- STM.readTVar connReplies
-  case msgs of
-    r:rs -> do
-      STM.writeTVar connReplies rs
-      return r
-
-recvReply :: Connection -> IO RespExpr
-recvReply Conn{..} = STM.atomically $ do
-  msgs <- STM.readTVar connReplies
-  case msgs of
-    RespPush _ _ : _ -> STM.retry -- Wait for the pub/sub listener to clear the queue
-    RespReply e : rs -> do
-      STM.writeTVar connReplies rs
-      return e
-
--- | Flush the socket.  Normally, the socket is flushed in 'recv' (actually 'conGetReplies'), but
--- for the multithreaded pub/sub code, the sending thread needs to explicitly flush the subscription
--- change requests.
-flush :: Connection -> IO ()
-flush Conn{..} = CC.flush connCtx
-
--- |Send a request and receive the corresponding reply
-request :: Connection -> S.ByteString -> IO RespExpr
-request conn req = send conn req >> recvReply conn
+ppRecv :: Connection -> IO RespExpr
+ppRecv Conn{..} = do
+  r : rs <- readIORef connReplies
+  writeIORef connReplies rs
+  return r
 
 -- |A list of all future 'Reply's of the 'Connection'.
 --

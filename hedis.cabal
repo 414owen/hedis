@@ -98,6 +98,7 @@ library
 
   other-modules:    Database.Redis.Core,
                     Database.Redis.Connection,
+                    Database.Redis.Connection.Class,
                     Database.Redis.Cluster,
                     Database.Redis.Cluster.HashSlot,
                     Database.Redis.Cluster.Command,
