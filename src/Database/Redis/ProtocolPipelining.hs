@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 -- |A module for automatic, optimal protocol pipelining.
 --
@@ -25,7 +26,6 @@ module Database.Redis.ProtocolPipelining (
   enableTLS,
   beginReceiving,
   disconnect,
-  request,
   ppSend,
   ppRecv,
   fromCtx
@@ -41,7 +41,7 @@ import qualified Network.Socket as NS
 import qualified Network.TLS as TLS
 import           System.IO.Unsafe
 
-import           Database.Redis.Connection.Class (RedisConnection(..))
+import           Database.Redis.Connection.Class (RedisConnection(..), HasReqReplyConnection (..))
 import qualified Database.Redis.ConnectionContext as CC
 import           Database.Redis.Protocol
 
@@ -57,12 +57,12 @@ data Connection = Conn
     --   length connPending  - pendingCount = length connReplies
   }
 
-instance HasReqReplyConnection Connection where
+instance HasReqReplyConnection Connection Connection RespExpr where
   getReqReplyConn = id
 
 instance RedisConnection Connection RespExpr where
-  recvRedis = ppRecv
-  sendRedis = ppSend
+  recvRedisConn = ppRecv
+  sendRedisConn = ppSend
 
 fromCtx :: CC.ConnectionContext -> IO Connection
 fromCtx ctx = Conn ctx <$> newIORef [] <*> newIORef [] <*> newIORef 0
@@ -112,6 +112,9 @@ ppRecv Conn{..} = do
   writeIORef connReplies rs
   return r
 
+flush :: Connection -> IO ()
+flush Conn{..} = CC.flush connCtx
+
 -- |A list of all future 'Reply's of the 'Connection'.
 --
 --  The spine of the list can be evaluated without forcing the replies.
@@ -124,16 +127,16 @@ ppRecv Conn{..} = do
 --  thread-safe. 'Handle' as implemented by GHC is also threadsafe, it is safe
 --  to call 'hFlush' here. The list constructor '(:)' must be called from
 --  /within/ unsafeInterleaveIO, to keep the replies in correct order.
-connGetReplies :: Connection -> IO [RespMessage]
-connGetReplies conn@Conn{..} = go S.empty (RespReply $ RespString "previous of first")
+connGetReplies :: Connection -> IO [RespExpr]
+connGetReplies conn@Conn{..} = go S.empty $ RespString "previous of first"
   where
-    go :: S.ByteString -> RespMessage -> IO [RespMessage]
+    go :: S.ByteString -> RespExpr -> IO [RespExpr]
     go rest previous = do
       -- lazy pattern match to actually delay the receiving
-      ~(r :: RespMessage, rest' :: S.ByteString) <- unsafeInterleaveIO $ do
+      ~(r :: RespExpr, rest' :: S.ByteString) <- unsafeInterleaveIO $ do
         -- Force previous reply for correct order.
         previous `seq` return ()
-        scanResult <- Scanner.scanWith readMore parseMessage rest
+        scanResult <- Scanner.scanWith readMore parseExpression rest
         case scanResult of
           Scanner.Fail{}       -> CC.errConnClosed
           Scanner.More{}    -> error "Hedis: parseWith returned Partial"

@@ -24,6 +24,7 @@ import qualified Database.Redis.ProtocolPipelining as PP
 import Database.Redis.Types
 import Database.Redis.Cluster(ShardMap)
 import qualified Database.Redis.Cluster as Cluster
+import qualified Database.Redis.Connection.Class as Class
 
 --------------------------------------------------------------------------------
 -- The Redis Monad
@@ -89,13 +90,11 @@ setLastReply r = do
   ref <- asks envLastReply
   lift (writeIORef ref r)
 
-recvReply :: (MonadRedis m) => m RespMessage
+recvReply :: (MonadRedis m) => m RespExpr
 recvReply = liftRedis $ Redis $ do
   conn <- asks envConn
-  r <- liftIO (PP.recv conn)
-  case r of
-    RespReply r' -> setLastReply r'
-    _ -> return ()
+  r <- liftIO (Class.recvReply conn)
+  setLastReply r
   return r
 
 {-
@@ -111,7 +110,7 @@ recvExpr = liftRedis $ Redis $ do
 send :: (MonadRedis m) => [B.ByteString] -> m ()
 send req = liftRedis $ Redis $ do
     conn <- asks envConn
-    liftIO $ PP.send conn (renderRequest req)
+    liftIO $ Class.send conn (renderRequest req)
 
 -- |'sendRequest' can be used to implement commands from experimental
 --  versions of Redis. An example of how to implement a command is given
@@ -130,7 +129,7 @@ sendRequest req = do
         env <- ask
         case env of
             NonClusteredEnv{..} -> do
-                r <- liftIO $ PP.request envConn (renderRequest req)
+                r <- liftIO $ Class.request envConn (renderRequest req)
                 setLastReply r
                 return r
             ClusteredEnv{..} -> liftIO $ Cluster.requestPipelined refreshAction connection req
