@@ -20,10 +20,10 @@ import qualified Data.ByteString as B
 import Data.IORef
 import Database.Redis.Core.Internal
 import Database.Redis.Protocol
-import qualified Database.Redis.ProtocolPipelining as PP
+import qualified Database.Redis.Connection.ProtocolPipelining as PP
 import Database.Redis.Types
-import Database.Redis.Cluster(ShardMap)
-import qualified Database.Redis.Cluster as Cluster
+import Database.Redis.Connection.Cluster(ShardMap)
+import qualified Database.Redis.Connection.Cluster as Cluster
 import qualified Database.Redis.Connection.Class as Class
 
 --------------------------------------------------------------------------------

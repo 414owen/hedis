@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns #-}
-module Database.Redis.Cluster
+module Database.Redis.Connection.Cluster
   ( Connection(..)
   , NodeRole(..)
   , NodeConnection(..)

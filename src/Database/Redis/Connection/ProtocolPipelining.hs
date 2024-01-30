@@ -20,7 +20,7 @@
 --  Note that this module is incompatible with push messages, as that would
 --  listening for, and inspecting, messages requires flushing the pipeline.
 --
-module Database.Redis.ProtocolPipelining (
+module Database.Redis.Connection.ProtocolPipelining (
   Connection,
   connect,
   enableTLS,
@@ -33,7 +33,6 @@ module Database.Redis.ProtocolPipelining (
 
 import           Prelude
 import           Control.Monad
-import           Data.RESP (parseMessage)
 import qualified Scanner
 import qualified Data.ByteString as S
 import           Data.IORef

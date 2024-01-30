@@ -17,18 +17,21 @@ import Data.RESP (RespMessage, parseMessage, RespExpr, parseExpression)
 import Data.ByteString (ByteString)
 import Scanner (Scanner)
 
-class RedisConnection conn msg => HasPubSubConnection a conn msg | a -> conn where
-  getPubSubConn :: a -> conn
+class ReqReplyConn conn where
+  request :: conn -> IO RespExpr
 
-class RedisConnection conn msg => HasReqReplyConnection a conn msg | a -> conn where
-  getReqReplyConn :: a -> conn
-
-class RedisConnection conn msg | conn -> msg where
-  recvRedisConn :: conn -> IO msg
-  sendRedisConn :: conn -> ByteString -> IO ()
+class PubSubConn conn where
+  sendPubSubMsg :: conn -> [ByteString] -> IO ()
+  recvRedisConn :: conn -> IO RespMessage
 
 recvReply :: HasReqReplyConnection a conn RespExpr => a -> IO RespExpr
 recvReply conn' = recvRedisConn conn
+  where
+    !conn = getReqReplyConn conn'
+
+-- | Receive something on the push channel
+recvPush :: HasReqReplyConnection a conn RespExpr => a -> IO RespMessage
+recvPush conn' = recvRedisConn conn
   where
     !conn = getReqReplyConn conn'
 

@@ -39,7 +39,7 @@ import Data.Semigroup (Semigroup(..))
 import qualified Data.HashMap.Strict as HM
 import qualified Database.Redis.Core as Core
 import qualified Database.Redis.Connection as Connection
-import qualified Database.Redis.ProtocolPipelining as PP
+import qualified Database.Redis.Connection.Class as Connection
 import Database.Redis.Protocol (RespMessage(..), RespExpr(..), renderRequest)
 import Database.Redis.Types
 
@@ -122,9 +122,9 @@ totalPendingChanges :: PubSub -> Int
 totalPendingChanges (PubSub{..}) =
   cmdCount subs + cmdCount unsubs + cmdCount psubs + cmdCount punsubs
 
-rawSendCmd :: (Command (Cmd a b)) => PP.Connection -> Cmd a b -> IO ()
+rawSendCmd :: (Command (Cmd a b)) => conn -> Cmd a b -> IO ()
 rawSendCmd _ DoNothing = return ()
-rawSendCmd conn cmd    = PP.send conn $ renderRequest $ redisCmd cmd : changes cmd
+rawSendCmd conn cmd    = Connection.sendRedisConn conn $ renderRequest $ redisCmd cmd : changes cmd
 
 plusChangeCnt :: Cmd a b -> Int -> Int
 plusChangeCnt DoNothing = id
@@ -488,9 +488,9 @@ removeChannelsAndWait ctrl remChans remPChans = do
 -- | Internal thread which listens for messages and executes callbacks.
 -- This is the only thread which ever receives data from the underlying
 -- connection.
-listenThread :: PubSubController -> PP.Connection -> IO ()
+listenThread :: PubSubController -> conn -> IO ()
 listenThread ctrl rawConn = forever $ do
-    msg <- PP.recv rawConn
+    msg <- Connection.recvRedisConn rawConn
     case decodeMsg msg of
         Msg (Message channel msgCt) -> do
           cm <- atomically $ readTVar (callbacks ctrl)
@@ -510,7 +510,7 @@ listenThread ctrl rawConn = forever $ do
 -- | Internal thread which sends subscription change requests.
 -- This is the only thread which ever sends data on the underlying
 -- connection.
-sendThread :: PubSubController -> PP.Connection -> IO ()
+sendThread :: PubSubController -> conn -> IO ()
 sendThread ctrl rawConn = forever $ do
     PubSub{..} <- atomically $ readTBQueue (sendChanges ctrl)
     rawSendCmd rawConn subs
@@ -519,7 +519,7 @@ sendThread ctrl rawConn = forever $ do
     rawSendCmd rawConn punsubs
     -- normally, the socket is flushed during 'recv', but
     -- 'recv' could currently be blocking on a message.
-    PP.flush rawConn
+    Connection.flushRedisConn rawConn
 
 -- | Open a connection to the Redis server, register to all channels in the 'PubSubController',
 -- and process messages and subscription change requests forever.  The only way this will ever

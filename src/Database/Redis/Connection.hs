@@ -11,7 +11,6 @@ import Control.Monad(when)
 import Control.Concurrent.MVar(MVar, newMVar)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as Char8
-import Data.Functor(void)
 import qualified Data.IntMap.Strict as IntMap
 import Data.Pool
     ( Pool
@@ -30,11 +29,11 @@ import Network.TLS (ClientParams)
 import qualified Network.Socket as NS
 import qualified Data.HashMap.Strict as HM
 
-import qualified Database.Redis.ProtocolPipelining as PP
+import qualified Database.Redis.Connection.ProtocolPipelining as PP
 import Database.Redis.Core(Redis, runRedisInternal, runRedisClusteredInternal)
 import Database.Redis.Protocol(RespExpr(..))
-import Database.Redis.Cluster(ShardMap(..), Node, Shard(..))
-import qualified Database.Redis.Cluster as Cluster
+import Database.Redis.Connection.Cluster(ShardMap(..), Node, Shard(..))
+import qualified Database.Redis.Connection.Cluster as Cluster
 import qualified Database.Redis.ConnectionContext as CC
 --import qualified Database.Redis.Cluster.Pipeline as ClusterPipeline
 import Database.Redis.Commands

@@ -10,8 +10,8 @@ import Control.Monad.Reader
 import Data.IORef
 import Database.Redis.Protocol
 import Control.Monad.IO.Unlift (MonadUnliftIO)
-import qualified Database.Redis.ProtocolPipelining as PP
-import qualified Database.Redis.Cluster as Cluster
+import qualified Database.Redis.Connection.ProtocolPipelining as PP
+import qualified Database.Redis.Connection.Cluster as Cluster
 
 -- |Context for normal command execution, outside of transactions. Use
 --  'runRedis' to run actions of this type.
