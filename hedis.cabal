@@ -70,6 +70,7 @@ library
   exposed-modules:  Database.Redis
                   , Database.Redis.Sentinel
                   , Database.Redis.Core.Internal
+                  , Database.Redis.Connection.PubSub
   build-depends:    scanner >= 0.2,
                     async >= 2.1,
                     base >= 4.8 && < 5,
@@ -103,6 +104,7 @@ library
                     Database.Redis.Cluster.Command,
                     Database.Redis.Connection.Cluster,
                     Database.Redis.Connection.ProtocolPipelining,
+                    Database.Redis.Connection.NotPipelined,
                     Database.Redis.Protocol,
                     Database.Redis.PubSub,
                     Database.Redis.Transactions,

@@ -42,6 +42,7 @@ import qualified Database.Redis.Connection as Connection
 import qualified Database.Redis.Connection.Class as Connection
 import Database.Redis.Protocol (RespMessage(..), RespExpr(..), renderRequest)
 import Database.Redis.Types
+import Database.Redis.Connection.Class
 
 -- |While in PubSub mode, we keep track of the number of current subscriptions
 --  (as reported by Redis replies) and the number of messages we expect to
@@ -122,9 +123,9 @@ totalPendingChanges :: PubSub -> Int
 totalPendingChanges (PubSub{..}) =
   cmdCount subs + cmdCount unsubs + cmdCount psubs + cmdCount punsubs
 
-rawSendCmd :: (Command (Cmd a b)) => conn -> Cmd a b -> IO ()
+rawSendCmd :: (PubSubConn conn, Command (Cmd a b)) => conn -> Cmd a b -> IO ()
 rawSendCmd _ DoNothing = return ()
-rawSendCmd conn cmd    = Connection.sendRedisConn conn $ renderRequest $ redisCmd cmd : changes cmd
+rawSendCmd conn cmd    = Connection.sendPubSubMsg conn $ renderRequest $ redisCmd cmd : changes cmd
 
 plusChangeCnt :: Cmd a b -> Int -> Int
 plusChangeCnt DoNothing = id
@@ -246,7 +247,7 @@ pubSub initial callback
 
     recv :: StateT PubSubState Core.Redis ()
     recv = do
-        reply <- lift Core.recvReply
+        reply <- lift $ recvPubSubMsg _
         case decodeMsg reply of
             Msg msg        -> liftIO (callback msg) >>= send
             Subscribed     -> modifyPending (subtract 1) >> recv
@@ -487,10 +488,10 @@ removeChannelsAndWait ctrl remChans remPChans = do
 
 -- | Internal thread which listens for messages and executes callbacks.
 -- This is the only thread which ever receives data from the underlying
--- connection.
-listenThread :: PubSubController -> conn -> IO ()
+-- pub/sub connection.
+listenThread :: PubSubConn conn => PubSubController -> conn -> IO ()
 listenThread ctrl rawConn = forever $ do
-    msg <- Connection.recvRedisConn rawConn
+    msg <- Connection.recvPubSubMsg rawConn
     case decodeMsg msg of
         Msg (Message channel msgCt) -> do
           cm <- atomically $ readTVar (callbacks ctrl)
@@ -517,9 +518,7 @@ sendThread ctrl rawConn = forever $ do
     rawSendCmd rawConn unsubs
     rawSendCmd rawConn psubs
     rawSendCmd rawConn punsubs
-    -- normally, the socket is flushed during 'recv', but
-    -- 'recv' could currently be blocking on a message.
-    Connection.flushRedisConn rawConn
+    Connection.flushPubSubMsgs rawConn
 
 -- | Open a connection to the Redis server, register to all channels in the 'PubSubController',
 -- and process messages and subscription change requests forever.  The only way this will ever

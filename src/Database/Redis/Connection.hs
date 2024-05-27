@@ -135,13 +135,10 @@ createConnection :: ConnectInfo -> IO PP.Connection
 createConnection ConnInfo{..} = do
     let timeoutOptUs =
           round . (1000000 *) <$> connectTimeout
-    conn <- PP.connect connectHost connectPort timeoutOptUs
-    conn' <- case connectTLSParams of
-               Nothing -> return conn
-               Just tlsParams -> PP.enableTLS tlsParams conn
-    PP.beginReceiving conn'
+    conn <- PP.connect connectHost connectPort timeoutOptUs connectTLSParams
+    PP.beginReceiving conn
 
-    runRedisInternal conn' $ do
+    runRedisInternal conn $ do
         -- AUTH
         case connectAuth of
             Nothing   -> return ()
@@ -156,7 +153,7 @@ createConnection ConnInfo{..} = do
           case resp of
               Left r -> liftIO $ throwIO $ ConnectSelectError r
               _      -> return ()
-    return conn'
+    return conn
 
 -- |Constructs a 'Connection' pool to a Redis server designated by the
 --  given 'ConnectInfo'.
@@ -168,7 +165,7 @@ connect cInfo@ConnInfo{..} = do
 #else
         createPool (createConnection cInfo) PP.disconnect 1 connectMaxIdleTime connectMaxConnections
 #endif
-    runRedis c hello
+    _ <- runRedis c hello
     pure c
 
 -- |Constructs a 'Connection' pool to a Redis server designated by the

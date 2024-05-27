@@ -7,26 +7,17 @@ module Database.Redis.Core.Internal where
 import Control.Monad.Fail (MonadFail)
 #endif
 import Control.Monad.Reader
-import Data.IORef
-import Database.Redis.Protocol
 import Control.Monad.IO.Unlift (MonadUnliftIO)
-import qualified Database.Redis.Connection.ProtocolPipelining as PP
-import qualified Database.Redis.Connection.Cluster as Cluster
 
 -- |Context for normal command execution, outside of transactions. Use
 --  'runRedis' to run actions of this type.
 --
 --  In this context, each result is wrapped in an 'Either' to account for the
 --  possibility of Redis returning an 'Error' reply.
-newtype Redis a =
-  Redis (ReaderT RedisEnv IO a)
+newtype Redis conn a =
+  Redis (ReaderT conn IO a)
   deriving (Monad, MonadIO, Functor, Applicative, MonadUnliftIO)
+
 #if __GLASGOW_HASKELL__ > 711
-deriving instance MonadFail Redis
+deriving instance MonadFail (Redis conn)
 #endif
-data RedisEnv
-    = NonClusteredEnv { envConn :: PP.Connection, envLastReply :: IORef RespExpr }
-    | ClusteredEnv
-        { refreshAction :: IO Cluster.ShardMap
-        , connection :: Cluster.Connection
-        }

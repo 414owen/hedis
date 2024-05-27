@@ -23,11 +23,8 @@
 module Database.Redis.Connection.ProtocolPipelining (
   Connection,
   connect,
-  enableTLS,
   beginReceiving,
   disconnect,
-  ppSend,
-  ppRecv,
   fromCtx
 ) where
 
@@ -40,7 +37,7 @@ import qualified Network.Socket as NS
 import qualified Network.TLS as TLS
 import           System.IO.Unsafe
 
-import           Database.Redis.Connection.Class (RedisConnection(..), HasReqReplyConnection (..))
+import           Database.Redis.Connection.Class (ReqReplyConn(..))
 import qualified Database.Redis.ConnectionContext as CC
 import           Database.Redis.Protocol
 
@@ -56,28 +53,23 @@ data Connection = Conn
     --   length connPending  - pendingCount = length connReplies
   }
 
-instance HasReqReplyConnection Connection Connection RespExpr where
-  getReqReplyConn = id
-
-instance RedisConnection Connection RespExpr where
-  recvRedisConn = ppRecv
-  sendRedisConn = ppSend
+instance ReqReplyConn Connection where
+  recvReqReplyMsg = ppRecv
+  sendReqReplyMsg = ppSend
 
 fromCtx :: CC.ConnectionContext -> IO Connection
 fromCtx ctx = Conn ctx <$> newIORef [] <*> newIORef [] <*> newIORef 0
 
-connect :: NS.HostName -> CC.PortID -> Maybe Int -> IO Connection
-connect hostName portId timeoutOpt = do
-    connCtx <- CC.connect hostName portId timeoutOpt
+connect :: NS.HostName -> CC.PortID -> Maybe Int -> Maybe TLS.ClientParams -> IO Connection
+connect hostName portId timeoutOpt mTlsOpts = do
+    connCtx' <- CC.connect hostName portId timeoutOpt
     connReplies <- newIORef []
     connPending <- newIORef []
     connPendingCnt <- newIORef 0
+    connCtx <- case mTlsOpts of
+      Just tlsOpts -> CC.enableTLS tlsOpts connCtx'
+      Nothing -> pure connCtx'
     return Conn{..}
-
-enableTLS :: TLS.ClientParams -> Connection -> IO Connection
-enableTLS tlsParams conn@Conn{..} = do
-    newCtx <- CC.enableTLS tlsParams connCtx
-    return conn{connCtx = newCtx}
 
 beginReceiving :: Connection -> IO ()
 beginReceiving conn = do

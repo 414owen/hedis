@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, RecordWildCards,
+{-# LANGUAGE AllowAmbiguousTypes, OverloadedStrings, GeneralizedNewtypeDeriving, RecordWildCards,
     MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, CPP,
     DeriveDataTypeable, StandaloneDeriving, UndecidableInstances #-}
 
@@ -24,7 +24,7 @@ import qualified Database.Redis.Connection.ProtocolPipelining as PP
 import Database.Redis.Types
 import Database.Redis.Connection.Cluster(ShardMap)
 import qualified Database.Redis.Connection.Cluster as Cluster
-import qualified Database.Redis.Connection.Class as Class
+import Database.Redis.Connection.Class
 
 --------------------------------------------------------------------------------
 -- The Redis Monad
@@ -35,23 +35,23 @@ import qualified Database.Redis.Connection.Class as Class
 --
 --  Please refer to the Command Type Signatures section of this page for more
 --  information.
-class (MonadRedis m) => RedisCtx m f | m -> f where
+class (MonadRedis conn m) => RedisCtx m conn f | m -> f where
     returnDecode :: RedisResult a => RespExpr -> m (f a)
 
-class (Monad m) => MonadRedis m where
-    liftRedis :: Redis a -> m a
+class (Monad m) => MonadRedis conn m where
+    liftRedis :: Redis conn a -> m a
 
 instance {-# OVERLAPPABLE #-}
   ( MonadTrans t
-  , MonadRedis m
+  , MonadRedis conn m
   , Monad (t m)
-  ) => MonadRedis (t m) where
+  ) => MonadRedis conn (t m) where
   liftRedis = lift . liftRedis
 
-instance RedisCtx Redis (Either RespExpr) where
+instance RedisCtx (Redis conn) conn (Either RespExpr) where
     returnDecode = return . decode
 
-instance MonadRedis Redis where
+instance MonadRedis conn (Redis conn) where
     liftRedis = id
 
 -- |Deconstruct Redis constructor.
@@ -61,16 +61,16 @@ instance MonadRedis Redis where
 --
 --  WARNING! These functions are considered internal and no guarantee
 --  is given at this point that they will not break in future.
-unRedis :: Redis a -> ReaderT RedisEnv IO a
+unRedis :: Redis conn a -> ReaderT conn IO a
 unRedis (Redis r) = r
 
 -- |Reconstruct Redis constructor.
-reRedis :: ReaderT RedisEnv IO a -> Redis a
+reRedis :: ReaderT conn IO a -> Redis conn a
 reRedis = Redis
 
 -- |Internal version of 'runRedis' that does not depend on the 'Connection'
 --  abstraction. Used to run the AUTH command when connecting.
-runRedisInternal :: PP.Connection -> Redis a -> IO a
+runRedisInternal :: PP.Connection -> Redis conn a -> IO a
 runRedisInternal conn (Redis redis) = do
   -- Dummy reply in case no request is sent.
   ref <- newIORef $ RespString "nobody will ever see this"
@@ -79,38 +79,27 @@ runRedisInternal conn (Redis redis) = do
   readIORef ref >>= (`seq` return ())
   return r
 
-runRedisClusteredInternal :: Cluster.Connection -> IO ShardMap -> Redis a -> IO a
+runRedisClusteredInternal :: Cluster.Connection -> IO ShardMap -> Redis conn a -> IO a
 runRedisClusteredInternal connection refreshShardmapAction (Redis redis) = do
     r <- runReaderT redis (ClusteredEnv refreshShardmapAction connection)
     r `seq` return ()
     return r
 
-setLastReply :: RespExpr -> ReaderT RedisEnv IO ()
+setLastReply :: RespExpr -> ReaderT PP.Connection IO ()
 setLastReply r = do
   ref <- asks envLastReply
   lift (writeIORef ref r)
 
-recvReply :: (MonadRedis m) => m RespExpr
+recvReply :: (MonadRedis conn m) => m RespExpr
 recvReply = liftRedis $ Redis $ do
   conn <- asks envConn
-  r <- liftIO (Class.recvReply conn)
-  setLastReply r
+  r <- liftIO (recvReqReplyMsg conn)
   return r
 
-{-
--- TODO do we need this?
-recvExpr :: (MonadRedis m) => m RespExpr
-recvExpr = liftRedis $ Redis $ do
-  conn <- asks envConn
-  r <- liftIO (PP.recvExpr conn)
-  setLastReply r
-  return r
--}
-
-send :: (MonadRedis m) => [B.ByteString] -> m ()
+send :: (MonadRedis conn m) => [B.ByteString] -> m ()
 send req = liftRedis $ Redis $ do
     conn <- asks envConn
-    liftIO $ Class.send conn (renderRequest req)
+    liftIO $ sendReqReplyMsg conn (renderRequest req)
 
 -- |'sendRequest' can be used to implement commands from experimental
 --  versions of Redis. An example of how to implement a command is given
@@ -122,15 +111,6 @@ send req = liftRedis $ Redis $ do
 -- debugObject key = 'sendRequest' [\"DEBUG\", \"OBJECT\", key]
 -- @
 --
-sendRequest :: (RedisCtx m f, RedisResult a)
+sendRequest :: (ReqReplyConn conn, RedisCtx m conn f, RedisResult a)
     => [B.ByteString] -> m (f a)
-sendRequest req = do
-    r' <- liftRedis $ Redis $ do
-        env <- ask
-        case env of
-            NonClusteredEnv{..} -> do
-                r <- liftIO $ Class.request envConn (renderRequest req)
-                setLastReply r
-                return r
-            ClusteredEnv{..} -> liftIO $ Cluster.requestPipelined refreshAction connection req
-    returnDecode r'
+sendRequest req = liftRedis $ Redis $ liftIO $ request envConn (renderRequest req) >>= returnDecode

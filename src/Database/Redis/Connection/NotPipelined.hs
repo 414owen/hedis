@@ -1,41 +1,44 @@
-{- | This module provides a connection that isn't pipelined, and can be
-used to run request/reply commands, as well as publish/subscribe.
+{- | This module provides a connection that isn't pipelined. It's currently
+used as a component of 'Database.Redis.Connection.PubSub.Connection'.
+
+It can also be used as a connection in its own right, which *only* supports
+pub/sub.
+
+In future, if someone separates out responses by type, this could be used as a
+connection which supports both pub/sub and request/reply, over a single OS
+socket. I recommend checking that doing so doesn't regress performance, before
+merging such a change.
 -}
 
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NamedFieldPuns        #-}
 
 module Database.Redis.Connection.NotPipelined
   ( Connection
   , connect
   , disconnect
-  , ppSend
-  , ppRecv
-  , fromCtx
   ) where
 
 import           Data.RESP (parseMessage)
 import qualified Scanner
 import qualified Data.ByteString as S
-import qualified Network.Socket as NS
-import qualified Network.TLS as TLS
+import qualified Network.Socket  as NS
+import qualified Network.TLS     as TLS
 
-import           Database.Redis.Connection.Class (RedisConnection(..), HasReqReplyConnection (..))
+import           Control.Concurrent.MVar (newMVar, takeMVar, MVar, putMVar)
+import           Database.Redis.Connection.Class (PubSubConn(..))
 import qualified Database.Redis.ConnectionContext as CC
 import           Database.Redis.Protocol
-import Control.Concurrent.MVar (newMVar, takeMVar, MVar, putMVar)
 
 data Connection = Conn
-  { connCtx :: {-# UNPACK #-} !CC.ConnectionContext -- ^ Connection socket-handle.
+  { connCtx       :: {-# UNPACK #-} !CC.ConnectionContext -- ^ Connection socket-handle.
   , connLeftovers :: {-# UNPACK #-} !(MVar S.ByteString)
   }
 
-instance HasReqReplyConnection Connection Connection RespExpr where
-  getReqReplyConn = id
-
-instance RedisConnection Connection RespExpr where
-  recvRedisConn = ppRecv
-  sendRedisConn = ppSend
+instance PubSubConn Connection where
+  recvPubSubMsg = ppRecv
+  sendPubSubMsg Conn{ connCtx } s = CC.send connCtx s
+  flushPubSubMsgs Conn{ connCtx} = CC.flush connCtx
 
 fromCtx :: CC.ConnectionContext -> IO Connection
 fromCtx connCtx = do
@@ -52,11 +55,6 @@ connect hostName portId timeoutOpt mTlsParams = do
 disconnect :: Connection -> IO ()
 disconnect Conn{ connCtx = connCtx } = CC.disconnect connCtx
 
-ppSend :: Connection -> S.ByteString -> IO ()
-ppSend Conn{ connCtx } s = do
-  CC.send connCtx s
-  CC.flush connCtx
-
 ppRecv :: Connection -> IO RespMessage
 ppRecv Conn{ connCtx, connLeftovers } = do
   leftovers <- takeMVar connLeftovers
@@ -69,6 +67,4 @@ ppRecv Conn{ connCtx, connLeftovers } = do
       pure r
 
   where
-    readMore = CC.ioErrorToConnLost $ do
-      CC.flush connCtx
-      CC.recv connCtx
+    readMore = CC.ioErrorToConnLost $ CC.recv connCtx
